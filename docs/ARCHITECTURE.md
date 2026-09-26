@@ -72,7 +72,7 @@ turns that into output:
 A command that fails part-way returns both the partial result and the error,
 so the JSON still says what was done.
 
-Errors map to exit codes in one place (`exit.go`):
+Errors map to exit codes in one place (`internal/cli/errors.go`):
 
 | code | kind | cause |
 |---|---|---|
