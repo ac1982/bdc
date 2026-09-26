@@ -25,10 +25,10 @@ func (e *Error) Error() string {
 	switch {
 	case e.Code != 0:
 		return fmt.Sprintf("%s: %s (错误码 %d)", e.Op, e.Message, e.Code)
-	case e.Err != nil:
-		return fmt.Sprintf("%s: %v", e.Op, e.Err)
+	case e.Message != "":
+		return fmt.Sprintf("%s: %s", e.Op, e.Message)
 	}
-	return fmt.Sprintf("%s: %s", e.Op, e.Message)
+	return fmt.Sprintf("%s: %v", e.Op, e.Err)
 }
 
 func (e *Error) Unwrap() error { return e.Err }

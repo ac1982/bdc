@@ -34,6 +34,10 @@ type root struct {
 	Download downloadCmd `cmd:"" group:"传输" help:"下载文件或目录"`
 	Upload   uploadCmd   `cmd:"" group:"传输" help:"上传文件或目录"`
 
+	Share   shareCmd   `cmd:"" group:"分享" help:"分享链接: 创建, 列出, 取消, 转存"`
+	Recycle recycleCmd `cmd:"" group:"管理" help:"回收站"`
+	Offline offlineCmd `cmd:"" group:"传输" help:"离线下载: 由百度的服务器下载链接到网盘"`
+
 	Config configCmd `cmd:"" group:"其他" help:"显示和修改设置"`
 }
 
