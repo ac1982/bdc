@@ -3,9 +3,11 @@ package baidu
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"path"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -142,7 +144,7 @@ func (c *Client) Mkdir(ctx context.Context, dir string) (File, error) {
 
 // Remove moves files and directories to the recycle bin.
 func (c *Client) Remove(ctx context.Context, paths ...string) error {
-	return c.do(ctx, &request{op: "删除", url: pcsURL("file", "delete", nil), param: pathList(paths...)}, nil)
+	return c.do(ctx, &request{op: "删除 " + describe(paths), url: pcsURL("file", "delete", nil), param: pathList(paths...)}, nil)
 }
 
 // Rename is one source and destination of a copy or move.
@@ -153,12 +155,12 @@ type Rename struct {
 
 // Copy copies each From to its To (a full destination path).
 func (c *Client) Copy(ctx context.Context, pairs ...Rename) error {
-	return c.do(ctx, &request{op: "复制", url: pcsURL("file", "copy", nil), param: map[string]any{"list": pairs}}, nil)
+	return c.do(ctx, &request{op: "复制 " + describeFrom(pairs), url: pcsURL("file", "copy", nil), param: map[string]any{"list": pairs}}, nil)
 }
 
 // Move moves or renames each From to its To (a full destination path).
 func (c *Client) Move(ctx context.Context, pairs ...Rename) error {
-	return c.do(ctx, &request{op: "移动", url: pcsURL("file", "move", nil), param: map[string]any{"list": pairs}}, nil)
+	return c.do(ctx, &request{op: "移动 " + describeFrom(pairs), url: pcsURL("file", "move", nil), param: map[string]any{"list": pairs}}, nil)
 }
 
 // Search finds files under dir whose name contains keyword.
@@ -174,6 +176,22 @@ func (c *Client) Search(ctx context.Context, dir, keyword string, recursive bool
 		return nil, err
 	}
 	return files(resp.List), nil
+}
+
+// describe names the paths of a batch in an error message.
+func describe(paths []string) string {
+	if len(paths) > 3 {
+		return strings.Join(paths[:3], ", ") + fmt.Sprintf(" 等 %d 项", len(paths))
+	}
+	return strings.Join(paths, ", ")
+}
+
+func describeFrom(pairs []Rename) string {
+	from := make([]string, len(pairs))
+	for i, p := range pairs {
+		from[i] = p.From
+	}
+	return describe(from)
 }
 
 func pathList(paths ...string) map[string]any {

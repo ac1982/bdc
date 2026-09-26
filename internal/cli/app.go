@@ -54,7 +54,7 @@ type runner interface {
 
 // Main runs bnd with the arguments after the program name and returns the exit code.
 func Main(args []string) int {
-	defer stopCassette()
+	defer func() { stopCassette() }() // set once the client is built
 	app := &App{ctx: context.Background(), json: hasJSONFlag(args), stdout: os.Stdout, stderr: os.Stderr, stdin: os.Stdin}
 
 	cfg, err := config.Load()
@@ -107,7 +107,7 @@ func (a *App) exec(args []string) int {
 	case errors.Is(err, errShowVersion):
 		return a.report("version", versionResult{Version}, nil)
 	case err != nil:
-		return a.report(command, nil, withKind(Usage, err))
+		return a.report(command, nil, usagef("%v (用 bnd %s --help 查看用法)", err, strings.TrimSpace(command)))
 	}
 
 	cmd, ok := kctx.Selected().Target.Addr().Interface().(runner)

@@ -49,16 +49,15 @@ func (c *lsCmd) Run(app *App) (Result, error) {
 	r := lsResult{Files: []baidu.File{}, long: c.Long}
 	var loose []baidu.File
 	for _, p := range paths {
-		files, err := client.List(app.ctx, p)
-		if errors.Is(err, baidu.ErrNotFound) {
-			// not a directory: maybe a file
-			f, merr := client.Meta(app.ctx, p)
-			if merr != nil {
-				return r, err
-			}
+		f, err := stat(app, client, p)
+		if err != nil {
+			return r, err
+		}
+		if !f.IsDir {
 			loose = append(loose, f)
 			continue
 		}
+		files, err := client.List(app.ctx, p)
 		if err != nil {
 			return r, err
 		}
@@ -73,6 +72,14 @@ func (c *lsCmd) Run(app *App) (Result, error) {
 		r.Files = append(r.Files, l.Files...)
 	}
 	return r, nil
+}
+
+// stat describes a path; the root, which Baidu cannot describe, is a directory.
+func stat(app *App, client *baidu.Client, p string) (baidu.File, error) {
+	if p == "/" {
+		return baidu.File{Path: "/", Name: "/", IsDir: true}, nil
+	}
+	return client.Meta(app.ctx, p)
 }
 
 func (c *lsCmd) sort(files []baidu.File) {
@@ -153,8 +160,14 @@ func (c *treeCmd) Run(app *App) (Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	dir := app.abs(c.Path)
-	root := &treeNode{File: baidu.File{Path: dir, Name: path.Base(dir), IsDir: true}}
+	f, err := stat(app, client, app.abs(c.Path))
+	if err != nil {
+		return nil, err
+	}
+	if !f.IsDir {
+		return nil, inputf("%s 不是目录", f.Path)
+	}
+	root := &treeNode{File: f}
 	var build func(n *treeNode, depth int) error
 	build = func(n *treeNode, depth int) error {
 		files, err := client.List(app.ctx, n.Path)
@@ -298,14 +311,12 @@ func (c *cdCmd) Run(app *App) (Result, error) {
 		return nil, inputf("%s 匹配了多个目录", c.Dir)
 	}
 	dir := dirs[0]
-	if dir != "/" {
-		f, err := client.Meta(app.ctx, dir)
-		if err != nil {
-			return nil, err
-		}
-		if !f.IsDir {
-			return nil, inputf("%s 不是目录", dir)
-		}
+	f, err := stat(app, client, dir)
+	if err != nil {
+		return nil, err
+	}
+	if !f.IsDir {
+		return nil, inputf("%s 不是目录", dir)
 	}
 	acc, _ := app.account()
 	acc.Workdir = dir
