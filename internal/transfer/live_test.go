@@ -115,10 +115,10 @@ func TestLive(t *testing.T) {
 		t.Error("cancel share:", err)
 	}
 
-	if err := c.Remove(ctx, root+"/sub", root+"/small1"); err != nil {
+	if _, err := c.Remove(ctx, root+"/sub", root+"/small1"); err != nil {
 		t.Error("remove:", err)
 	}
-	if err := c.Remove(ctx, root+"/missing"); !errors.Is(err, baidu.ErrNotFound) {
+	if _, err := c.Remove(ctx, root+"/missing"); !errors.Is(err, baidu.ErrNotFound) {
 		t.Error("remove missing:", err)
 	}
 }

@@ -6,18 +6,24 @@ import (
 	"runtime"
 	"strings"
 
+	"golang.org/x/text/unicode/norm"
+
 	"github.com/ac1982/baidunetdisk-cli/internal/baidu"
 )
 
 func hasGlob(p string) bool { return strings.ContainsAny(p, `*?[\`) }
 
 // remoteKey and localKey fold paths the way their store compares them:
-// Baidu ignores case, and so do the usual file systems of macOS and Windows.
-// Two paths with the same key are the same file.
+// Baidu ignores case; the usual file systems of macOS ignore case and Unicode
+// normalization (é composed or not), those of Windows ignore case. Two paths
+// with the same key are the same file.
 func remoteKey(p string) string { return strings.ToLower(p) }
 
 func localKey(p string) string {
-	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+	switch runtime.GOOS {
+	case "darwin":
+		return strings.ToLower(norm.NFC.String(p))
+	case "windows":
 		return strings.ToLower(p)
 	}
 	return p

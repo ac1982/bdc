@@ -200,6 +200,39 @@ func TestDownloadLeavesOthersFilesAlone(t *testing.T) {
 	}
 }
 
+// A response longer than asked for must fail the download, through the
+// retries, and leave no finished file.
+func TestDownloadRunRejectsLongBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.(http.Flusher).Flush()
+		w.Write([]byte("abcdefgh"))
+	}))
+	defer srv.Close()
+	dest := filepath.Join(t.TempDir(), "f")
+	d := &Download{Client: http.DefaultClient, Size: 4, Dest: dest,
+		URLs: func(context.Context) ([]string, error) { return []string{srv.URL}, nil }}
+	if err := d.Run(context.Background()); err == nil {
+		t.Fatal("download of an overlong response succeeded")
+	}
+	if _, err := os.Stat(dest); !os.IsNotExist(err) {
+		t.Fatal("a file was installed")
+	}
+}
+
+// Temporary files have unique names, so a user's file is never clobbered.
+func TestDownloadKeepsUserTmpFile(t *testing.T) {
+	dest := filepath.Join(t.TempDir(), "f")
+	os.WriteFile(dest+PartSuffix+".json.tmp", []byte("mine"), 0o644)
+	d := &Download{Client: http.DefaultClient, Size: 3, Dest: dest,
+		URLs: func(context.Context) ([]string, error) { return []string{serve(t, []byte("abc")).URL}, nil }}
+	if err := d.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(dest + PartSuffix + ".json.tmp"); string(got) != "mine" {
+		t.Fatalf("user's file is now %q", got)
+	}
+}
+
 func TestDownloadRejectsLongBody(t *testing.T) {
 	for name, h := range map[string]http.HandlerFunc{
 		"200 of unknown length": func(w http.ResponseWriter, r *http.Request) {

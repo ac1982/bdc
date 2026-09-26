@@ -23,7 +23,7 @@
 | 1 | failed | server, network or transfer failure | retry later |
 | 2 | input | not found, already exists, no wildcard match, wrong extraction code, bad value | fix the input; `bnd ls --json` to look around |
 | 3 | dependency | browser cookies unreadable (permissions) | log in with `--cookies` |
-| 4 | auth | not logged in or login expired | `bnd login` again |
+| 4 | auth | not logged in or login expired; with `code` 132, Baidu wants a security check instead | `bnd login` again; for 132 logging in does not help: stop and ask the user to verify on the web or phone |
 | 64 | usage | bad command line, or a confirmation needed without a terminal | see `bnd <command> --help`; add `-y` |
 | 130 | cancelled | interrupted | rerun; transfers resume |
 

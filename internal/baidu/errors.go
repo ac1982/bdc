@@ -15,11 +15,10 @@ var (
 
 // Error is a failure reported by Baidu, or a failure to reach it.
 type Error struct {
-	Op      string   // what was being done, e.g. "列出目录 /a"
-	Code    int      // Baidu's error code; 0 for network and decoding failures
-	Message string   // Baidu's message, or our explanation of the code
-	Err     error    // the underlying error, if any
-	Failed  []string // batch calls: the paths whose items failed
+	Op      string // what was being done, e.g. "列出目录 /a"
+	Code    int    // Baidu's error code; 0 for network and decoding failures
+	Message string // Baidu's message, or our explanation of the code
+	Err     error  // the underlying error, if any
 }
 
 func (e *Error) Error() string {

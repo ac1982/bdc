@@ -370,21 +370,29 @@ func (c *mkdirCmd) Run(app *App) (Result, error) {
 	var errs []error
 	for _, d := range c.Dirs {
 		p := app.abs(d)
-		f, err := client.Mkdir(app.ctx, p)
-		if errors.Is(err, baidu.ErrExists) {
-			if f, merr := client.Meta(app.ctx, p); merr == nil && f.IsDir {
-				r.Existing = append(r.Existing, p)
-				continue
-			}
-			err = inputf("%s 已存在, 且不是目录", p)
-		}
-		if err != nil {
+		switch f, created, err := app.ensureDir(client, p); {
+		case err != nil:
 			errs = append(errs, err)
-			continue
+		case created:
+			r.Created = append(r.Created, f)
+		default:
+			r.Existing = append(r.Existing, p)
 		}
-		r.Created = append(r.Created, f)
 	}
 	return r, errors.Join(errs...)
+}
+
+// ensureDir makes sure dir exists as a directory, creating it (and its
+// parents) if needed; created reports whether it was new.
+func (a *App) ensureDir(client *baidu.Client, dir string) (f baidu.File, created bool, err error) {
+	f, err = client.Mkdir(a.ctx, dir)
+	if !errors.Is(err, baidu.ErrExists) {
+		return f, err == nil, err
+	}
+	if f, err = client.Meta(a.ctx, dir); err == nil && !f.IsDir {
+		err = inputf("%s 已存在, 且不是目录", dir)
+	}
+	return f, false, err
 }
 
 // rm
@@ -412,10 +420,8 @@ func (c *rmCmd) Run(app *App) (Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := client.Remove(app.ctx, paths...); err != nil {
-		return nil, err
-	}
-	return rmResult{paths}, nil
+	removed, err := client.Remove(app.ctx, paths...)
+	return rmResult{append([]string{}, removed...)}, err
 }
 
 // cp, mv
@@ -437,16 +443,22 @@ func (r renameResult) Human(w io.Writer) {
 	}
 }
 
-func (c *cpCmd) Run(app *App) (Result, error) {
-	return rename(app, c.Paths, "复制", (*baidu.Client).Copy)
-}
-func (c *mvCmd) Run(app *App) (Result, error) {
-	return rename(app, c.Paths, "移动", (*baidu.Client).Move)
+func (c *cpCmd) Run(app *App) (Result, error) { return copier.run(app, c.Paths) }
+func (c *mvCmd) Run(app *App) (Result, error) { return mover.run(app, c.Paths) }
+
+// renamer is what differs between cp and mv.
+type renamer struct {
+	verb string
+	op   func(*baidu.Client, context.Context, ...baidu.Rename) ([]baidu.Rename, error)
+	move bool
 }
 
-type renameOp func(*baidu.Client, context.Context, ...baidu.Rename) ([]baidu.Rename, error)
+var (
+	copier = renamer{"复制", (*baidu.Client).Copy, false}
+	mover  = renamer{"移动", (*baidu.Client).Move, true}
+)
 
-func rename(app *App, args []string, verb string, op renameOp) (Result, error) {
+func (rn renamer) run(app *App, args []string) (Result, error) {
 	if len(args) < 2 {
 		return nil, usagef("需要源和目标")
 	}
@@ -460,6 +472,9 @@ func rename(app *App, args []string, verb string, op renameOp) (Result, error) {
 	}
 	dst := app.abs(args[len(args)-1]) // the target is a name, never a pattern
 	into := len(srcs) > 1 || strings.HasSuffix(args[len(args)-1], "/")
+	if rn.move && len(srcs) == 1 && srcs[0] != dst && remoteKey(srcs[0]) == remoteKey(dst) {
+		return rn.caseOnly(app, client, srcs[0], dst)
+	}
 	if f, err := client.Meta(app.ctx, dst); err == nil {
 		if !f.IsDir {
 			return nil, inputf("目标已存在: %s", dst)
@@ -469,7 +484,7 @@ func rename(app *App, args []string, verb string, op renameOp) (Result, error) {
 		return nil, err
 	}
 
-	r := renameResult{Items: []baidu.Rename{}, verb: verb}
+	r := renameResult{Items: []baidu.Rename{}, verb: rn.verb}
 	seen := map[string]string{} // by remote key
 	for _, s := range srcs {
 		to := dst
@@ -477,12 +492,25 @@ func rename(app *App, args []string, verb string, op renameOp) (Result, error) {
 			to = path.Join(dst, path.Base(s))
 		}
 		if other, dup := seen[remoteKey(to)]; dup {
-			return nil, inputf("%s 和 %s 会%s到同一个位置 %s", other, s, verb, to)
+			return nil, inputf("%s 和 %s 会%s到同一个位置 %s", other, s, rn.verb, to)
 		}
 		seen[remoteKey(to)] = s
 		r.Items = append(r.Items, baidu.Rename{From: s, To: to})
 	}
-	done, err := op(client, app.ctx, r.Items...)
+	done, err := rn.op(client, app.ctx, r.Items...)
 	r.Items = append([]baidu.Rename{}, done...) // on failure, what was done anyway
 	return r, err
+}
+
+// caseOnly renames a to A. Baidu ignores case, so it sees A as taken by a
+// itself; the rename goes by way of a temporary name.
+func (rn renamer) caseOnly(app *App, client *baidu.Client, src, dst string) (Result, error) {
+	tmp := dst + ".bnd-rename"
+	if _, err := client.Move(app.ctx, baidu.Rename{From: src, To: tmp}); err != nil {
+		return nil, err
+	}
+	if _, err := client.Move(app.ctx, baidu.Rename{From: tmp, To: dst}); err != nil {
+		return nil, fmt.Errorf("%w (文件现在是 %s)", err, tmp)
+	}
+	return renameResult{Items: []baidu.Rename{{From: src, To: dst}}, verb: rn.verb}, nil
 }

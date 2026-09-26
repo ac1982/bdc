@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -335,11 +337,36 @@ func TestPartialMove(t *testing.T) {
 	ta := newTestApp(t)
 	ta.fake.Put("/src/a", []byte("a"), 1)
 	ta.fake.Put("/src/b", []byte("b"), 1)
+	ta.fake.Put("/src/c", []byte("c"), 1)
 	ta.fake.Put("/dst/b", []byte("old"), 1)
-	code, doc := ta.json(t, "mv", "/src/a", "/src/b", "/dst")
+	ta.fake.Put("/dst/c", []byte("old"), 1) // existed before: not moved, though present
+	code, doc := ta.json(t, "mv", "/src/a", "/src/b", "/src/c", "/dst")
 	items, _ := doc["items"].([]any)
 	if code != 2 || len(items) != 1 || items[0].(map[string]any)["from"] != "/src/a" {
 		t.Errorf("partial move: %d %v", code, doc)
+	}
+}
+
+func TestCaseOnlyRename(t *testing.T) {
+	ta := newTestApp(t)
+	ta.fake.Put("/a.txt", []byte("a"), 1)
+	if code := ta.run("mv", "/a.txt", "/A.txt"); code != 0 {
+		t.Errorf("case-only rename: %d %s", code, ta.stderr.String())
+	}
+}
+
+func TestDeepest(t *testing.T) {
+	got := deepest([]string{"/a", "/a/b", "/a/b c", "/a/b/x", "/d", "/a/b/x"}, path.Dir)
+	if want := []string{"/a/b c", "/a/b/x", "/d"}; !slices.Equal(got, want) {
+		t.Errorf("deepest = %v, want %v", got, want)
+	}
+}
+
+func TestLocalKey(t *testing.T) {
+	composed, decomposed := "/x/caf\u00e9.txt", "/x/cafe\u0301.txt"
+	same := localKey(composed) == localKey(decomposed) && localKey("/X/A") == localKey("/x/a")
+	if want := runtime.GOOS == "darwin"; runtime.GOOS != "windows" && same != want {
+		t.Errorf("darwin folds case and normalization, others neither: got same=%v", same)
 	}
 }
 
@@ -361,5 +388,32 @@ func TestShareNeedsLogin(t *testing.T) {
 	ta.cfg.Current().Cookies = "BDUSS=expired"
 	if code, _ := ta.json(t, "share", "create", "/f"); code != 4 {
 		t.Errorf("share create with an expired login: %d", code)
+	}
+}
+
+func TestUploadEmptyDirOntoFile(t *testing.T) {
+	ta := newTestApp(t)
+	ta.fake.Put("/r/empty", []byte("a file"), 1)
+	src := filepath.Join(t.TempDir(), "empty")
+	os.Mkdir(src, 0o755)
+	if code, doc := ta.json(t, "upload", src, "/r"); code != 2 {
+		t.Errorf("empty dir onto a file: %d %v", code, doc)
+	}
+}
+
+func TestRemoveReportsPartialBatches(t *testing.T) {
+	ta := newTestApp(t)
+	for i := range 501 {
+		ta.fake.Put(fmt.Sprintf("/d/%03d", i), nil, 1)
+	}
+	ta.fake.Fail = func(endpoint string, n int) any {
+		if endpoint == "pan.baidu.com/api/filemanager" && n == 2 {
+			return map[string]any{"errno": 132}
+		}
+		return nil
+	}
+	code, doc := ta.json(t, "rm", "/d/*")
+	if removed, _ := doc["removed"].([]any); code != 4 || len(removed) != 500 {
+		t.Errorf("%d, removed %d", code, len(removed))
 	}
 }

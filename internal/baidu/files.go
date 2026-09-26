@@ -192,18 +192,21 @@ func (c *Client) Mkdir(ctx context.Context, dir string) (File, error) {
 	return File{FsID: r.FsID, Path: dir, Name: path.Base(dir), IsDir: true, Ctime: time.Unix(r.Ctime, 0), Mtime: time.Unix(r.Mtime, 0)}, nil
 }
 
-// Remove moves files and directories to the recycle bin. Every path must
+// Remove moves files and directories to the recycle bin and returns the
+// paths removed, which on failure may be some of them. Every path must
 // exist: Baidu itself would silently accept missing ones.
-func (c *Client) Remove(ctx context.Context, paths ...string) error {
+func (c *Client) Remove(ctx context.Context, paths ...string) ([]string, error) {
 	if _, err := c.Metas(ctx, paths...); err != nil {
-		return err
+		return nil, err
 	}
+	var done []string
 	for _, batch := range splitBy(paths, byCount[string](maxBatch)) {
 		if err := c.fileManager(ctx, "delete", "删除 "+describe(batch), batch); err != nil {
-			return err
+			return done, err
 		}
+		done = append(done, batch...)
 	}
-	return nil
+	return done, nil
 }
 
 // Rename is one source and destination of a copy or move.
@@ -228,42 +231,40 @@ func (c *Client) Move(ctx context.Context, pairs ...Rename) ([]Rename, error) {
 func (c *Client) renameAll(ctx context.Context, opera, verb string, pairs []Rename) ([]Rename, error) {
 	var done []Rename
 	for _, batch := range splitBy(pairs, byCount[Rename](maxBatch)) {
+		before := c.targets(ctx, batch)
 		if err := c.fileManager(ctx, opera, verb+" "+describeFrom(batch), moves(batch)); err != nil {
-			return append(done, c.arrived(ctx, batch, err)...), err
+			// Baidu applies items in order until one fails: the pairs done are
+			// those whose destination appeared.
+			after := c.targets(ctx, batch)
+			for _, p := range batch {
+				if k := strings.ToLower(p.To); after[k] && !before[k] {
+					done = append(done, p)
+				}
+			}
+			return done, err
 		}
 		done = append(done, batch...)
 	}
 	return done, nil
 }
 
-// arrived finds which pairs of a failed batch were done anyway: Baidu applies
-// the items before the one that failed. A pair counts when its destination
-// now exists and Baidu did not name it as failed.
-func (c *Client) arrived(ctx context.Context, pairs []Rename, err error) []Rename {
-	failed := map[string]bool{}
-	if e, ok := errors.AsType[*Error](err); ok {
-		for _, p := range e.Failed {
-			failed[p] = true
-		}
-	}
-	listed := map[string]map[string]bool{} // dir → lower-cased names in it
-	var done []Rename
+// targets reports which destinations of pairs exist, by lower-cased path
+// (Baidu ignores case), listing each destination directory once.
+func (c *Client) targets(ctx context.Context, pairs []Rename) map[string]bool {
+	exists := map[string]bool{}
+	listed := map[string]bool{}
 	for _, p := range pairs {
-		dir := path.Dir(p.To)
-		names, ok := listed[dir]
-		if !ok {
-			names = map[string]bool{}
-			entries, _ := c.List(ctx, dir)
-			for _, e := range entries {
-				names[strings.ToLower(e.Name)] = true
-			}
-			listed[dir] = names
+		dir := strings.ToLower(path.Dir(p.To))
+		if listed[dir] {
+			continue
 		}
-		if !failed[p.From] && names[strings.ToLower(path.Base(p.To))] {
-			done = append(done, p)
+		listed[dir] = true
+		entries, _ := c.List(ctx, path.Dir(p.To))
+		for _, e := range entries {
+			exists[strings.ToLower(e.Path)] = true
 		}
 	}
-	return done
+	return exists
 }
 
 func moves(pairs []Rename) []map[string]string {

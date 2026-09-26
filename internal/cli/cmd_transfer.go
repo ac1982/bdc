@@ -134,7 +134,7 @@ func (r *batchResult) run(app *App, fn func(ctx context.Context, it *item, progr
 			total += it.Size
 		}
 	}
-	for _, d := range deepest(r.dirs) { // creating a directory creates its parents
+	for _, d := range r.dirs {
 		if err := r.mkdir(d); err != nil {
 			it := &item{Local: d}
 			if r.upload {
@@ -174,17 +174,22 @@ func (r *batchResult) run(app *App, fn func(ctx context.Context, it *item, progr
 	return nil
 }
 
-// deepest drops directories that are parents of others in the list.
-func deepest(dirs []string) []string {
-	slices.Sort(dirs)
-	dirs = slices.Compact(dirs)
-	var out []string
-	for i, d := range dirs {
-		if i+1 < len(dirs) && strings.HasPrefix(dirs[i+1], strings.TrimSuffix(d, "/")+"/") {
-			continue // sorted: a descendant follows directly
+// deepest drops directories that are ancestors of others in the list;
+// parent is path.Dir or filepath.Dir.
+func deepest(dirs []string, parent func(string) string) []string {
+	ancestor := map[string]bool{}
+	for _, d := range dirs {
+		for p := parent(d); p != d; d, p = p, parent(p) {
+			ancestor[p] = true
 		}
-		out = append(out, d)
 	}
+	var out []string
+	for _, d := range dirs {
+		if !ancestor[d] && !slices.Contains(out, d) {
+			out = append(out, d)
+		}
+	}
+	slices.Sort(out)
 	return out
 }
 
@@ -332,22 +337,26 @@ func (c *uploadCmd) Run(app *App) (Result, error) {
 	}
 	s := app.cfg.Settings
 	dir := app.abs(c.Args[len(c.Args)-1])
-	// Directories are made before the parallel uploads: files that create the
-	// same new parent at once make Baidu fail one of them (-8).
 	r := &batchResult{Files: []*item{}, upload: true, mkdir: func(d string) error {
-		if _, err := client.Mkdir(app.ctx, d); err != nil && !errors.Is(err, baidu.ErrExists) {
-			return err
-		}
-		return nil
+		_, _, err := app.ensureDir(client, d)
+		return err
 	}}
 	for _, local := range c.Args[:len(c.Args)-1] {
 		planUpload(local, dir, r)
 	}
 	c.checkExisting(app.ctx, client, r.Files)
+
+	// Make the files' directories first: files that create the same new parent
+	// at once make Baidu fail one of them (-8). Best effort; committing a file
+	// creates its parents anyway, and reports its own failure.
+	var parents []string
 	for _, it := range r.Files {
 		if it.Status == "" {
-			r.dirs = append(r.dirs, path.Dir(it.Remote))
+			parents = append(parents, path.Dir(it.Remote))
 		}
+	}
+	for _, d := range deepest(parents, path.Dir) {
+		client.Mkdir(app.ctx, d)
 	}
 
 	lim := limiter(s.UploadLimit)
@@ -406,7 +415,9 @@ func planUpload(local, dir string, r *batchResult) {
 		}
 		rel, _ := filepath.Rel(abs, p)
 		if d.IsDir() {
-			r.dirs = append(r.dirs, path.Join(base, filepath.ToSlash(rel))) // so empty ones exist too
+			if entries, err := os.ReadDir(p); err == nil && len(entries) == 0 {
+				r.dirs = append(r.dirs, path.Join(base, filepath.ToSlash(rel))) // empty: nothing else creates it
+			}
 			return nil
 		}
 		remote := path.Join(base, filepath.ToSlash(rel))

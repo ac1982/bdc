@@ -181,19 +181,15 @@ func decode(op string, status int, data []byte, out any) error {
 		Errno flexInt `json:"errno"`
 		Path  string  `json:"path"`
 	}
-	var failed []string
-	if code == errBatch && json.Unmarshal(st.Info, &items) == nil { // a batch call failed; the items say why
+	if code == errBatch && json.Unmarshal(st.Info, &items) == nil { // a batch call failed; the item says why
 		for _, it := range items {
-			if it.Errno == 0 {
-				continue
-			}
-			if len(failed) == 0 {
+			if it.Errno != 0 {
 				code = int(it.Errno)
 				if it.Path != "" {
 					op += " (" + it.Path + ")"
 				}
+				break
 			}
-			failed = append(failed, it.Path)
 		}
 	}
 	switch {
@@ -202,7 +198,7 @@ func decode(op string, status int, data []byte, out any) error {
 		if msg == "" {
 			msg = firstNonEmpty(st.ShowMsg, st.ErrorMsg, st.ErrMsg, "未知错误")
 		}
-		return &Error{Op: op, Code: code, Message: msg, Failed: failed}
+		return &Error{Op: op, Code: code, Message: msg}
 	case status < 200 || status > 299:
 		return &Error{Op: op, Message: fmt.Sprintf("HTTP %d: %s", status, snippet(data))}
 	case jsonErr != nil:

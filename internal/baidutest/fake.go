@@ -45,6 +45,10 @@ type Fake struct {
 
 	// Requests counts requests by "host/path?method".
 	Requests map[string]int
+
+	// Fail, if set, may answer a modelled endpoint instead of the fake (return
+	// non-nil): tests inject failures with it. n counts calls to the endpoint.
+	Fail func(endpoint string, n int) any
 }
 
 type node struct {
@@ -182,6 +186,12 @@ func (f *Fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		if f.Fail != nil {
+			if v := f.Fail(name, f.Requests[name]); v != nil {
+				reply(w, v)
+				return
+			}
+		}
 		handle(w, r)
 	}
 }

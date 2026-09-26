@@ -179,7 +179,7 @@ func (j *job) fetchChunk(ctx context.Context, i, worker int) error {
 		link := links[(worker+attempt)%len(links)]
 		attempt++
 		n, err := j.fetchRange(ctx, j.f, link, start, end)
-		start += n // keep what arrived before a failure
+		start += n // keep what arrived before a connection broke
 		return struct{}{}, err
 	}
 	_, err := backoff.Retry(ctx, op, backoff.WithMaxTries(10),
@@ -219,19 +219,30 @@ func (d *Download) fetchRange(ctx context.Context, f *os.File, link string, star
 	w := &offsetWriter{f: f, off: start, progress: d.Progress}
 	n, err := io.Copy(w, body)
 	switch {
-	case err != nil:
+	case err != nil: // a broken connection: what arrived is kept, the rest is retried
 	case start+n < end:
 		err = io.ErrUnexpectedEOF
-	case extra(resp.Body):
-		err = fmt.Errorf("下载 %d-%d: 服务器返回的内容比请求的长", start, end-1)
+	default:
+		if err = expectEOF(resp.Body); err != nil {
+			// The whole response is suspect, not just its tail: none of it counts.
+			return 0, backoff.Permanent(fmt.Errorf("下载 %d-%d: %w", start, end-1, err))
+		}
 	}
 	return n, err
 }
 
-// extra reports whether r has bytes left.
-func extra(r io.Reader) bool {
-	n, _ := r.Read(make([]byte, 1))
-	return n > 0
+// expectEOF checks that r has nothing left.
+func expectEOF(r io.Reader) error {
+	n, err := r.Read(make([]byte, 1))
+	switch {
+	case n > 0:
+		return errors.New("服务器返回的内容比请求的长")
+	case err == io.EOF:
+		return nil
+	case err == nil:
+		return errors.New("服务器的响应没有结束")
+	}
+	return err
 }
 
 // checkRange accepts only a response carrying exactly bytes [start, end) of
@@ -242,13 +253,14 @@ func (d *Download) checkRange(resp *http.Response, start, end int64) error {
 		var a, b, total int64
 		if _, err := fmt.Sscanf(resp.Header.Get("Content-Range"), "bytes %d-%d/%d", &a, &b, &total); err != nil ||
 			a != start || b != end-1 || total != d.Size {
-			return fmt.Errorf("下载 %d-%d: 服务器返回了不符的区间 %q", start, end-1, resp.Header.Get("Content-Range"))
+			// Other content than asked for: retrying will not help.
+			return backoff.Permanent(fmt.Errorf("下载 %d-%d: 服务器返回了不符的区间 %q", start, end-1, resp.Header.Get("Content-Range")))
 		}
 	case http.StatusOK: // the whole file, when that is what was asked for
 		if start != 0 || end != d.Size || (resp.ContentLength >= 0 && resp.ContentLength != d.Size) {
-			return fmt.Errorf("下载 %d-%d: 服务器返回了整个文件 (%d 字节)", start, end-1, resp.ContentLength)
+			return backoff.Permanent(fmt.Errorf("下载 %d-%d: 服务器返回了整个文件 (%d 字节)", start, end-1, resp.ContentLength))
 		}
-	default:
+	default: // this link failed; another may work
 		return fmt.Errorf("下载 %d-%d: HTTP %s", start, end-1, resp.Status)
 	}
 	return nil
@@ -338,9 +350,20 @@ func saveJSON(path string, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	// A unique temporary name: a fixed one could be someone else's file.
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".bnd-*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	_, err = tmp.Write(data)
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp.Name(), path)
+	}
+	if err != nil {
+		os.Remove(tmp.Name())
+	}
+	return err
 }
