@@ -88,10 +88,10 @@ func TestLive(t *testing.T) {
 	}
 
 	// Copy, move, meta.
-	if err := c.Copy(ctx, baidu.Rename{From: root + "/big.bin", To: root + "/copy.bin"}); err != nil {
+	if _, err := c.Copy(ctx, baidu.Rename{From: root + "/big.bin", To: root + "/copy.bin"}); err != nil {
 		t.Error("copy:", err)
 	}
-	if err := c.Move(ctx, baidu.Rename{From: root + "/copy.bin", To: root + "/sub/moved.bin"}); err != nil {
+	if _, err := c.Move(ctx, baidu.Rename{From: root + "/copy.bin", To: root + "/sub/moved.bin"}); err != nil {
 		t.Error("move into a missing dir:", err)
 	}
 	if m, err := c.Meta(ctx, root+"/sub/moved.bin"); err != nil || m.Size != int64(len(content)) {

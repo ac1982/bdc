@@ -20,6 +20,10 @@ type Share struct {
 // CreateShare shares paths with a 4-character extraction code for days
 // (0 = forever).
 func (c *Client) CreateShare(ctx context.Context, pwd string, days int, paths ...string) (Share, error) {
+	// Check first: pset answers a bad login or a missing path with unrelated errors.
+	if _, err := c.Metas(ctx, paths...); err != nil {
+		return Share{}, err
+	}
 	list, _ := json.Marshal(paths)
 	form := url.Values{
 		"path_list":    {string(list)},

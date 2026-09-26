@@ -444,7 +444,7 @@ func (c *mvCmd) Run(app *App) (Result, error) {
 	return rename(app, c.Paths, "移动", (*baidu.Client).Move)
 }
 
-type renameOp func(*baidu.Client, context.Context, ...baidu.Rename) error
+type renameOp func(*baidu.Client, context.Context, ...baidu.Rename) ([]baidu.Rename, error)
 
 func rename(app *App, args []string, verb string, op renameOp) (Result, error) {
 	if len(args) < 2 {
@@ -458,10 +458,7 @@ func rename(app *App, args []string, verb string, op renameOp) (Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	dst := app.abs(args[len(args)-1])
-	if hasGlob(dst) {
-		return nil, inputf("目标不能含通配符: %s", dst)
-	}
+	dst := app.abs(args[len(args)-1]) // the target is a name, never a pattern
 	into := len(srcs) > 1 || strings.HasSuffix(args[len(args)-1], "/")
 	if f, err := client.Meta(app.ctx, dst); err == nil {
 		if !f.IsDir {
@@ -473,20 +470,19 @@ func rename(app *App, args []string, verb string, op renameOp) (Result, error) {
 	}
 
 	r := renameResult{Items: []baidu.Rename{}, verb: verb}
-	seen := map[string]string{}
+	seen := map[string]string{} // by remote key
 	for _, s := range srcs {
 		to := dst
 		if into {
 			to = path.Join(dst, path.Base(s))
 		}
-		if other, dup := seen[to]; dup {
+		if other, dup := seen[remoteKey(to)]; dup {
 			return nil, inputf("%s 和 %s 会%s到同一个位置 %s", other, s, verb, to)
 		}
-		seen[to] = s
+		seen[remoteKey(to)] = s
 		r.Items = append(r.Items, baidu.Rename{From: s, To: to})
 	}
-	if err := op(client, app.ctx, r.Items...); err != nil {
-		return nil, err
-	}
-	return r, nil
+	done, err := op(client, app.ctx, r.Items...)
+	r.Items = append([]baidu.Rename{}, done...) // on failure, what was done anyway
+	return r, err
 }

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"golang.org/x/sync/errgroup"
@@ -44,20 +45,31 @@ type batchResult struct {
 	Files   []*item        `json:"files"`
 	Summary map[string]int `json:"summary"` // files per status
 	upload  bool
-	dirs    []string         // download: local directories to create, for empty remote ones
-	planned map[string]*item // by target
+	dirs    []string // directories to create before the files go in parallel
+	mkdir   func(string) error
+	planned map[string]*item // by the key of every file an item will write
 }
 
-// add plans an item. A second item for a target already planned fails:
-// two files cannot land in one place.
+// add plans an item. An item that would write a file another item already
+// claimed fails: two files cannot land in one place. A download also claims
+// its part file and resume record.
 func (r *batchResult) add(it *item) {
 	if r.planned == nil {
 		r.planned = map[string]*item{}
 	}
-	if other, dup := r.planned[r.target(it)]; dup {
-		it.fail(inputf("%s 与 %s 的目标相同: %s", r.source(it), r.source(other), r.target(it)))
-	} else {
-		r.planned[r.target(it)] = it
+	claims := []string{remoteKey(it.Remote)}
+	if !r.upload {
+		claims = []string{localKey(it.Local), localKey(it.Local + transfer.PartSuffix), localKey(it.Local + transfer.PartSuffix + ".json")}
+	}
+	for _, k := range claims {
+		if other, dup := r.planned[k]; dup {
+			it.fail(inputf("%s 与 %s 会写到同一个位置: %s", r.source(it), r.source(other), r.target(other)))
+			r.Files = append(r.Files, it)
+			return
+		}
+	}
+	for _, k := range claims {
+		r.planned[k] = it
 	}
 	r.Files = append(r.Files, it)
 }
@@ -122,9 +134,14 @@ func (r *batchResult) run(app *App, fn func(ctx context.Context, it *item, progr
 			total += it.Size
 		}
 	}
-	for _, d := range r.dirs {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			return err
+	for _, d := range deepest(r.dirs) { // creating a directory creates its parents
+		if err := r.mkdir(d); err != nil {
+			it := &item{Local: d}
+			if r.upload {
+				it = &item{Remote: d}
+			}
+			it.fail(err)
+			r.Files = append(r.Files, it)
 		}
 	}
 	m := app.newMeter(total, r.verb())
@@ -155,6 +172,20 @@ func (r *batchResult) run(app *App, fn func(ctx context.Context, it *item, progr
 		return &batchError{total: len(r.Files), errs: errs}
 	}
 	return nil
+}
+
+// deepest drops directories that are parents of others in the list.
+func deepest(dirs []string) []string {
+	slices.Sort(dirs)
+	dirs = slices.Compact(dirs)
+	var out []string
+	for i, d := range dirs {
+		if i+1 < len(dirs) && strings.HasPrefix(dirs[i+1], strings.TrimSuffix(d, "/")+"/") {
+			continue // sorted: a descendant follows directly
+		}
+		out = append(out, d)
+	}
+	return out
 }
 
 // batchError reports the failed files of a batch; errors.Is and As see each
@@ -197,14 +228,18 @@ func (c *downloadCmd) Run(app *App) (Result, error) {
 	if saveTo == "" {
 		saveTo = s.SaveDir
 	}
-	r := &batchResult{Files: []*item{}}
-	paths, err := app.expand(client, c.Paths...)
-	if err != nil {
-		return nil, err
-	}
-	for _, p := range paths {
-		if err := c.plan(app.ctx, client, p, saveTo, r); err != nil {
-			it := &item{Remote: p}
+	r := &batchResult{Files: []*item{}, mkdir: func(d string) error { return os.MkdirAll(d, 0o755) }}
+	for _, arg := range c.Paths { // each argument fails on its own
+		paths, err := app.expand(client, arg)
+		if err == nil {
+			for _, p := range paths {
+				if err = c.plan(app.ctx, client, p, saveTo, r); err != nil {
+					break
+				}
+			}
+		}
+		if err != nil {
+			it := &item{Remote: app.abs(arg)}
 			it.fail(err)
 			r.Files = append(r.Files, it)
 		}
@@ -221,7 +256,9 @@ func (c *downloadCmd) Run(app *App) (Result, error) {
 			URLs: func(ctx context.Context) ([]string, error) { return client.DownloadURLs(ctx, it.Remote) },
 			ID:   it.version, Size: it.Size, Dest: it.Local, Conns: conns, Limit: lim, Progress: progress,
 		}
-		if err := d.Run(ctx); err != nil {
+		if err := d.Run(ctx); errors.Is(err, transfer.ErrOccupied) {
+			return withKind(Input, err)
+		} else if err != nil {
 			return err
 		}
 		it.Status = "downloaded"
@@ -237,7 +274,12 @@ func (c *downloadCmd) plan(ctx context.Context, client *baidu.Client, p, saveTo 
 	if err != nil {
 		return err
 	}
+	// Directories are created with the files in them; only empty ones need
+	// creating on their own.
+	var empty []string
+	emptyDest := map[string]string{}
 	visit := func(f baidu.File) error {
+		delete(emptyDest, path.Dir(f.Path)) // the parent has something in it
 		rel := f.Path
 		if !c.FullPath {
 			rel = strings.TrimPrefix(f.Path, path.Dir(root.Path))
@@ -247,7 +289,8 @@ func (c *downloadCmd) plan(ctx context.Context, client *baidu.Client, p, saveTo 
 			return err
 		}
 		if f.IsDir {
-			r.dirs = append(r.dirs, dest)
+			empty = append(empty, f.Path)
+			emptyDest[f.Path] = dest
 			return nil
 		}
 		it := &item{Remote: f.Path, Local: dest, Size: f.Size, version: fmt.Sprint(f.FsID, "@", f.Mtime.Unix())}
@@ -260,7 +303,15 @@ func (c *downloadCmd) plan(ctx context.Context, client *baidu.Client, p, saveTo 
 	if err := visit(root); err != nil || !root.IsDir {
 		return err
 	}
-	return client.Walk(ctx, root.Path, visit)
+	if err := client.Walk(ctx, root.Path, visit); err != nil {
+		return err
+	}
+	for _, d := range empty {
+		if dest, ok := emptyDest[d]; ok {
+			r.dirs = append(r.dirs, dest)
+		}
+	}
+	return nil
 }
 
 // upload
@@ -281,11 +332,23 @@ func (c *uploadCmd) Run(app *App) (Result, error) {
 	}
 	s := app.cfg.Settings
 	dir := app.abs(c.Args[len(c.Args)-1])
-	r := &batchResult{Files: []*item{}, upload: true}
+	// Directories are made before the parallel uploads: files that create the
+	// same new parent at once make Baidu fail one of them (-8).
+	r := &batchResult{Files: []*item{}, upload: true, mkdir: func(d string) error {
+		if _, err := client.Mkdir(app.ctx, d); err != nil && !errors.Is(err, baidu.ErrExists) {
+			return err
+		}
+		return nil
+	}}
 	for _, local := range c.Args[:len(c.Args)-1] {
 		planUpload(local, dir, r)
 	}
 	c.checkExisting(app.ctx, client, r.Files)
+	for _, it := range r.Files {
+		if it.Status == "" {
+			r.dirs = append(r.dirs, path.Dir(it.Remote))
+		}
+	}
 
 	lim := limiter(s.UploadLimit)
 	conns := cmp.Or(c.Conns, s.Connections)
@@ -341,10 +404,11 @@ func planUpload(local, dir string, r *batchResult) {
 			fail(p, err)
 			return nil
 		}
+		rel, _ := filepath.Rel(abs, p)
 		if d.IsDir() {
+			r.dirs = append(r.dirs, path.Join(base, filepath.ToSlash(rel))) // so empty ones exist too
 			return nil
 		}
-		rel, _ := filepath.Rel(abs, p)
 		remote := path.Join(base, filepath.ToSlash(rel))
 		info, err := os.Stat(p) // follows symlinks
 		switch {
@@ -372,7 +436,7 @@ func (c *uploadCmd) checkExisting(ctx context.Context, client *baidu.Client, ite
 			continue
 		}
 		dir := path.Dir(it.Remote)
-		l, ok := dirs[dir]
+		l, ok := dirs[remoteKey(dir)]
 		if !ok {
 			files, err := client.List(ctx, dir)
 			if errors.Is(err, baidu.ErrNotFound) {
@@ -380,11 +444,11 @@ func (c *uploadCmd) checkExisting(ctx context.Context, client *baidu.Client, ite
 			}
 			l = listing{entries: map[string]baidu.File{}, err: err}
 			for _, f := range files {
-				l.entries[f.Name] = f
+				l.entries[remoteKey(f.Name)] = f
 			}
-			dirs[dir] = l
+			dirs[remoteKey(dir)] = l
 		}
-		f, exists := l.entries[path.Base(it.Remote)]
+		f, exists := l.entries[remoteKey(path.Base(it.Remote))]
 		switch {
 		case l.err != nil:
 			it.fail(l.err)

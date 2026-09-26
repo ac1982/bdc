@@ -130,21 +130,53 @@ func (c *Client) Meta(ctx context.Context, p string) (File, error) {
 	return fs[0], nil
 }
 
-// Metas describes several files or directories; all must exist.
+// Metas describes several files or directories; all must exist. Paths go
+// in the URL, so long lists are split into requests that fit.
 func (c *Client) Metas(ctx context.Context, paths ...string) ([]File, error) {
-	target, _ := json.Marshal(paths)
-	q := url.Values{"target": {string(target)}, "dlink": {"0"}, "blocks": {"1"}}
-	var resp struct {
-		Info []rawFile `json:"info"`
+	var all []File
+	for _, batch := range splitBy(paths, func(b []string) bool {
+		target, _ := json.Marshal(b)
+		return len(url.QueryEscape(string(target))) <= maxURLParam
+	}) {
+		target, _ := json.Marshal(batch)
+		q := url.Values{"target": {string(target)}, "dlink": {"0"}, "blocks": {"1"}}
+		var resp struct {
+			Info []rawFile `json:"info"`
+		}
+		op := "获取 " + describe(batch)
+		if err := c.do(ctx, &request{op: op, url: panBase + "api/filemetas?" + q.Encode(), ua: uaNetdisk}, &resp); err != nil {
+			return all, err
+		}
+		if len(resp.Info) != len(batch) {
+			return all, &Error{Op: op, Message: "服务器返回的条目数不符"}
+		}
+		all = append(all, files(resp.Info)...)
 	}
-	if err := c.do(ctx, &request{op: "获取 " + describe(paths), url: panBase + "api/filemetas?" + q.Encode(), ua: uaNetdisk}, &resp); err != nil {
-		return nil, err
-	}
-	if len(resp.Info) != len(paths) {
-		return nil, &Error{Op: "获取 " + describe(paths), Message: "服务器返回的条目数不符"}
-	}
-	return files(resp.Info), nil
+	return all, nil
 }
+
+// maxURLParam keeps request URLs well below the ~8 KB servers accept.
+const maxURLParam = 6000
+
+// maxBatch is how many items one file-manager call takes (Baidu allows 999).
+const maxBatch = 500
+
+// splitBy cuts items into consecutive batches, each as long as fits allows
+// (but at least one item).
+func splitBy[T any](items []T, fits func([]T) bool) [][]T {
+	var out [][]T
+	for len(items) > 0 {
+		n := 1
+		for n < len(items) && fits(items[:n+1]) {
+			n++
+		}
+		out = append(out, items[:n])
+		items = items[n:]
+	}
+	return out
+}
+
+func byCount[T any](n int) func([]T) bool { return func(b []T) bool { return len(b) <= n } }
 
 // Mkdir creates a directory and any missing parents.
 func (c *Client) Mkdir(ctx context.Context, dir string) (File, error) {
@@ -166,7 +198,12 @@ func (c *Client) Remove(ctx context.Context, paths ...string) error {
 	if _, err := c.Metas(ctx, paths...); err != nil {
 		return err
 	}
-	return c.fileManager(ctx, "delete", "删除 "+describe(paths), paths)
+	for _, batch := range splitBy(paths, byCount[string](maxBatch)) {
+		if err := c.fileManager(ctx, "delete", "删除 "+describe(batch), batch); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Rename is one source and destination of a copy or move.
@@ -175,16 +212,58 @@ type Rename struct {
 	To   string `json:"to"`
 }
 
-// Copy copies each From to its To (a full destination path). Missing
-// parent directories of To are created.
-func (c *Client) Copy(ctx context.Context, pairs ...Rename) error {
-	return c.fileManager(ctx, "copy", "复制 "+describeFrom(pairs), moves(pairs))
+// Copy copies each From to its To (a full destination path), creating
+// missing parent directories. It returns the pairs that were done, which on
+// failure may be some of them.
+func (c *Client) Copy(ctx context.Context, pairs ...Rename) ([]Rename, error) {
+	return c.renameAll(ctx, "copy", "复制", pairs)
 }
 
-// Move moves or renames each From to its To (a full destination path).
-// Missing parent directories of To are created.
-func (c *Client) Move(ctx context.Context, pairs ...Rename) error {
-	return c.fileManager(ctx, "move", "移动 "+describeFrom(pairs), moves(pairs))
+// Move moves or renames each From to its To (a full destination path),
+// creating missing parent directories. It returns the pairs that were done.
+func (c *Client) Move(ctx context.Context, pairs ...Rename) ([]Rename, error) {
+	return c.renameAll(ctx, "move", "移动", pairs)
+}
+
+func (c *Client) renameAll(ctx context.Context, opera, verb string, pairs []Rename) ([]Rename, error) {
+	var done []Rename
+	for _, batch := range splitBy(pairs, byCount[Rename](maxBatch)) {
+		if err := c.fileManager(ctx, opera, verb+" "+describeFrom(batch), moves(batch)); err != nil {
+			return append(done, c.arrived(ctx, batch, err)...), err
+		}
+		done = append(done, batch...)
+	}
+	return done, nil
+}
+
+// arrived finds which pairs of a failed batch were done anyway: Baidu applies
+// the items before the one that failed. A pair counts when its destination
+// now exists and Baidu did not name it as failed.
+func (c *Client) arrived(ctx context.Context, pairs []Rename, err error) []Rename {
+	failed := map[string]bool{}
+	if e, ok := errors.AsType[*Error](err); ok {
+		for _, p := range e.Failed {
+			failed[p] = true
+		}
+	}
+	listed := map[string]map[string]bool{} // dir → lower-cased names in it
+	var done []Rename
+	for _, p := range pairs {
+		dir := path.Dir(p.To)
+		names, ok := listed[dir]
+		if !ok {
+			names = map[string]bool{}
+			entries, _ := c.List(ctx, dir)
+			for _, e := range entries {
+				names[strings.ToLower(e.Name)] = true
+			}
+			listed[dir] = names
+		}
+		if !failed[p.From] && names[strings.ToLower(path.Base(p.To))] {
+			done = append(done, p)
+		}
+	}
+	return done
 }
 
 func moves(pairs []Rename) []map[string]string {

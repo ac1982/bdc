@@ -15,10 +15,11 @@ var (
 
 // Error is a failure reported by Baidu, or a failure to reach it.
 type Error struct {
-	Op      string // what was being done, e.g. "列出目录 /a"
-	Code    int    // Baidu's error code; 0 for network and decoding failures
-	Message string // Baidu's message, or our explanation of the code
-	Err     error  // the underlying error, if any
+	Op      string   // what was being done, e.g. "列出目录 /a"
+	Code    int      // Baidu's error code; 0 for network and decoding failures
+	Message string   // Baidu's message, or our explanation of the code
+	Err     error    // the underlying error, if any
+	Failed  []string // batch calls: the paths whose items failed
 }
 
 func (e *Error) Error() string {
@@ -51,6 +52,7 @@ const errBatch = 12
 // codeClass maps the codes we understand to a class.
 var codeClass = map[int]error{
 	-6:    ErrAuth,     // 身份验证失败
+	132:   ErrAuth,     // 帐号存在安全风险, 需要安全验证
 	-9:    ErrNotFound, // 文件或目录不存在
 	31066: ErrNotFound, // file does not exist
 	-8:    ErrExists,   // 文件或目录已存在
@@ -64,6 +66,7 @@ var codeClass = map[int]error{
 // codeMessage explains codes whose server message is empty or unhelpful.
 var codeMessage = map[int]string{
 	-6:    "身份验证失败, 请重新登录",
+	132:   "百度要求安全验证 (操作过于频繁或帐号有风险), 请在网页或手机上完成验证后重试",
 	-7:    "文件名非法",
 	-8:    "文件或目录已存在",
 	-30:   "目标已存在",

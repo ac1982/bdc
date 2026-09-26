@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -163,6 +164,7 @@ func TestUploadDownloadRoundTrip(t *testing.T) {
 	write("up/big.bin", big)
 	write("up/sub/small.txt", []byte("small"))
 	write("up/empty.txt", nil)
+	os.MkdirAll(filepath.Join(src, "up", "nothing", "here"), 0o755) // empty directories go up too
 	if runtime.GOOS != "windows" {
 		os.Symlink(filepath.Join(src, "up", "sub"), filepath.Join(src, "up", "link")) // a symlinked dir: skipped
 	}
@@ -177,6 +179,9 @@ func TestUploadDownloadRoundTrip(t *testing.T) {
 	}
 	if !bytes.Equal(ta.fake.Data("/r/up/big.bin"), big) {
 		t.Error("uploaded content differs")
+	}
+	if !ta.fake.Exists("/r/up/nothing/here") {
+		t.Error("empty directory not created")
 	}
 	if code, doc := ta.json(t, "upload", filepath.Join(src, "up"), "/r"); code != 0 || doc["summary"].(map[string]any)["skipped"] == nil {
 		t.Errorf("upload again: %d %v", code, doc)
@@ -245,5 +250,116 @@ func TestJSONContract(t *testing.T) {
 	}
 	if code, doc := ta.json(t, "config"); code != 0 || strings.Contains(ta.stdout.String(), "fake-bduss") || doc["settings"] == nil {
 		t.Errorf("config: %d %s", code, ta.stdout.String())
+	}
+}
+
+func TestCaseInsensitiveTargets(t *testing.T) {
+	ta := newTestApp(t)
+	ta.fake.Put("/a/Readme.txt", []byte("a"), 1)
+	ta.fake.Put("/b/README.txt", []byte("b"), 1)
+	// Baidu ignores case: these two would land on one name.
+	if code := ta.run("cp", "/a/Readme.txt", "/b/README.txt", "/new"); code != 2 || ta.fake.Exists("/new") {
+		t.Errorf("cp of case variants: %d", code)
+	}
+	// An upload onto a case variant is the same file: skipped by default.
+	src := filepath.Join(t.TempDir(), "readme.TXT")
+	os.WriteFile(src, []byte("local"), 0o644)
+	code, doc := ta.json(t, "upload", src, "/a")
+	if item := doc["files"].([]any)[0].(map[string]any); code != 0 || item["status"] != "skipped" {
+		t.Errorf("upload onto a case variant: %d %v", code, item)
+	}
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" { // case-insensitive local file systems
+		code, doc := ta.json(t, "download", "-o", t.TempDir(), "/a/Readme.txt", "/b/README.txt")
+		if code != 2 || doc["summary"].(map[string]any)["failed"] != 1.0 {
+			t.Errorf("download of case variants: %d %v", code, doc)
+		}
+	}
+}
+
+func TestDownloadNeverTouchesOthersFiles(t *testing.T) {
+	ta := newTestApp(t)
+	ta.fake.Put("/d/x.bnd-part", []byte("a real file"), 1)
+	ta.fake.Put("/d/x", []byte("x"), 1)
+	dl := t.TempDir()
+	code, doc := ta.json(t, "download", "-o", dl, "/d/x.bnd-part", "/d/x")
+	if code != 2 || doc["summary"].(map[string]any)["downloaded"] != 1.0 {
+		t.Errorf("%d %v", code, doc)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dl, "x.bnd-part")); string(got) != "a real file" {
+		t.Errorf("the downloaded x.bnd-part was clobbered: %q", got)
+	}
+	// A leftover file bnd did not create is not taken for a part file.
+	dl2 := t.TempDir()
+	os.WriteFile(filepath.Join(dl2, "x.bnd-part"), []byte("mine"), 0o644)
+	if code, _ := ta.json(t, "download", "-o", dl2, "/d/x"); code != 2 {
+		t.Errorf("download next to a foreign part file: %d", code)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dl2, "x.bnd-part")); string(got) != "mine" {
+		t.Errorf("foreign part file changed: %q", got)
+	}
+}
+
+func TestDownloadFailuresStayLocal(t *testing.T) {
+	ta := newTestApp(t)
+	ta.fake.Put("/dir/f", []byte("f"), 1)
+	ta.fake.Put("/ok", []byte("ok"), 1)
+	dl := t.TempDir()
+	os.WriteFile(filepath.Join(dl, "dir"), []byte("a file where a directory must go"), 0o644)
+	code, doc := ta.json(t, "download", "-o", dl, "/dir", "/ok", "/missing*")
+	sum := doc["summary"].(map[string]any)
+	if code != 2 || sum["downloaded"] != 1.0 || sum["failed"] != 2.0 {
+		t.Errorf("%d %v", code, doc)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dl, "ok")); string(got) != "ok" {
+		t.Error("the independent file was not downloaded")
+	}
+}
+
+func TestManyPaths(t *testing.T) {
+	ta := newTestApp(t)
+	for i := range 300 {
+		ta.fake.Put(fmt.Sprintf("/many/很长的中文文件名-%03d.txt", i), []byte("x"), 1)
+	}
+	for i := range 1001 {
+		ta.fake.Put(fmt.Sprintf("/big/%04d", i), nil, 1)
+	}
+	if _, doc := ta.json(t, "ls", "/big"); len(doc["files"].([]any)) != 1001 {
+		t.Errorf("ls of 1001 entries: %d", len(doc["files"].([]any)))
+	}
+	if code := ta.run("rm", "/many/*"); code != 0 || ta.fake.Exists("/many/很长的中文文件名-299.txt") {
+		t.Errorf("rm of 300 matches: %d %s", code, ta.stderr.String())
+	}
+}
+
+func TestPartialMove(t *testing.T) {
+	ta := newTestApp(t)
+	ta.fake.Put("/src/a", []byte("a"), 1)
+	ta.fake.Put("/src/b", []byte("b"), 1)
+	ta.fake.Put("/dst/b", []byte("old"), 1)
+	code, doc := ta.json(t, "mv", "/src/a", "/src/b", "/dst")
+	items, _ := doc["items"].([]any)
+	if code != 2 || len(items) != 1 || items[0].(map[string]any)["from"] != "/src/a" {
+		t.Errorf("partial move: %d %v", code, doc)
+	}
+}
+
+func TestBracketTargets(t *testing.T) {
+	ta := newTestApp(t)
+	ta.fake.Put("/src", []byte("s"), 1)
+	ta.fake.Mkdir("/[dest]")
+	if code := ta.run("cp", "/src", "/[dest]"); code != 0 || !ta.fake.Exists("/[dest]/src") {
+		t.Errorf("cp into [dest]: %d %s", code, ta.stderr.String())
+	}
+	if code := ta.run("mv", "/src", "/[1].txt"); code != 0 || !ta.fake.Exists("/[1].txt") {
+		t.Errorf("mv to [1].txt: %d %s", code, ta.stderr.String())
+	}
+}
+
+func TestShareNeedsLogin(t *testing.T) {
+	ta := newTestApp(t)
+	ta.fake.Put("/f", []byte("f"), 1)
+	ta.cfg.Current().Cookies = "BDUSS=expired"
+	if code, _ := ta.json(t, "share", "create", "/f"); code != 4 {
+		t.Errorf("share create with an expired login: %d", code)
 	}
 }

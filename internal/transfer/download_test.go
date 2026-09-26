@@ -3,6 +3,7 @@ package transfer
 import (
 	"bytes"
 	"context"
+	"errors"
 	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
@@ -76,7 +77,7 @@ func TestDownloadResume(t *testing.T) {
 	copy(part[:chunkSize], content[:chunkSize])
 	copy(part[2*chunkSize:], content[2*chunkSize:])
 	os.WriteFile(dest+PartSuffix, part, 0o644)
-	saveJSON(dest+PartSuffix+".json", record{ID: "v1", Size: int64(len(content)), Done: []bool{true, false, true}})
+	saveJSON(dest+PartSuffix+".json", record{Owner: recordOwner, ID: "v1", Size: int64(len(content)), Done: []bool{true, false, true}})
 
 	d := &Download{Client: http.DefaultClient, ID: "v1", Size: int64(len(content)), Dest: dest, Conns: 4,
 		URLs: func(context.Context) ([]string, error) { return []string{srv.URL}, nil }}
@@ -136,12 +137,12 @@ func TestDownloadDiscardsStaleRecords(t *testing.T) {
 		},
 		"other version": func(dest string) {
 			os.WriteFile(dest+PartSuffix, make([]byte, len(content)), 0o644)
-			saveJSON(dest+PartSuffix+".json", record{ID: "old", Size: int64(len(content)), Done: []bool{true, true}})
+			saveJSON(dest+PartSuffix+".json", record{Owner: recordOwner, ID: "old", Size: int64(len(content)), Done: []bool{true, true}})
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			dest := filepath.Join(t.TempDir(), "f")
-			saveJSON(dest+PartSuffix+".json", record{ID: "v2", Size: int64(len(content)), Done: []bool{true, true}})
+			saveJSON(dest+PartSuffix+".json", record{Owner: recordOwner, ID: "v2", Size: int64(len(content)), Done: []bool{true, true}})
 			setup(dest)
 			d := &Download{Client: http.DefaultClient, ID: "v2", Size: int64(len(content)), Dest: dest,
 				URLs: func(context.Context) ([]string, error) { return []string{srv.URL}, nil }}
@@ -167,5 +168,59 @@ func TestDownloadRejectsWrongRange(t *testing.T) {
 	defer f.Close()
 	if _, err := d.fetchRange(context.Background(), f, srv.URL, 0, 4); err == nil {
 		t.Fatal("accepted a range that was not asked for")
+	}
+}
+
+// Files bnd did not create are never overwritten, whatever their names.
+func TestDownloadLeavesOthersFilesAlone(t *testing.T) {
+	srv := serve(t, []byte("new content"))
+	for name, setup := range map[string]func(dest string) string{
+		"user's part file": func(dest string) string {
+			os.WriteFile(dest+PartSuffix, []byte("mine"), 0o644)
+			return dest + PartSuffix
+		},
+		"user's json file": func(dest string) string {
+			os.WriteFile(dest+PartSuffix+".json", []byte(`{"id":"x"}`), 0o644)
+			return dest + PartSuffix + ".json"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dest := filepath.Join(t.TempDir(), "f")
+			theirs := setup(dest)
+			before, _ := os.ReadFile(theirs)
+			d := &Download{Client: http.DefaultClient, Size: 11, Dest: dest,
+				URLs: func(context.Context) ([]string, error) { return []string{srv.URL}, nil }}
+			if err := d.Run(context.Background()); !errors.Is(err, ErrOccupied) {
+				t.Fatalf("err = %v", err)
+			}
+			if after, _ := os.ReadFile(theirs); !bytes.Equal(before, after) {
+				t.Fatal("their file changed")
+			}
+		})
+	}
+}
+
+func TestDownloadRejectsLongBody(t *testing.T) {
+	for name, h := range map[string]http.HandlerFunc{
+		"200 of unknown length": func(w http.ResponseWriter, r *http.Request) {
+			w.(http.Flusher).Flush() // chunked: no Content-Length
+			w.Write([]byte("abcdefgh"))
+		},
+		"206 longer than its range": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Range", "bytes 0-3/4")
+			w.WriteHeader(http.StatusPartialContent)
+			w.Write([]byte("abcdefgh"))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(h)
+			defer srv.Close()
+			d := &Download{Client: http.DefaultClient, Size: 4, Dest: filepath.Join(t.TempDir(), "f")}
+			f, _ := os.Create(d.Dest)
+			defer f.Close()
+			if _, err := d.fetchRange(context.Background(), f, srv.URL, 0, 4); err == nil {
+				t.Fatal("accepted a body longer than asked for")
+			}
+		})
 	}
 }

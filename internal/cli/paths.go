@@ -3,12 +3,25 @@ package cli
 import (
 	"errors"
 	"path"
+	"runtime"
 	"strings"
 
 	"github.com/ac1982/baidunetdisk-cli/internal/baidu"
 )
 
 func hasGlob(p string) bool { return strings.ContainsAny(p, `*?[\`) }
+
+// remoteKey and localKey fold paths the way their store compares them:
+// Baidu ignores case, and so do the usual file systems of macOS and Windows.
+// Two paths with the same key are the same file.
+func remoteKey(p string) string { return strings.ToLower(p) }
+
+func localKey(p string) string {
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+		return strings.ToLower(p)
+	}
+	return p
+}
 
 // expand resolves each argument against the working directory and expands
 // wildcards against the netdisk. A path without wildcards is passed through

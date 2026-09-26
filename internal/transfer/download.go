@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -46,36 +45,33 @@ type Download struct {
 	Progress func(n int64)
 }
 
-// record is the resume state saved beside the part file.
+// record is the resume state saved beside the part file. Owner marks it as
+// bnd's, so a user's file that happens to have the same name is never taken
+// for a download in progress.
 type record struct {
-	ID   string `json:"id"`
-	Size int64  `json:"size"`
-	Done []bool `json:"done"` // per chunk
+	Owner string `json:"owner"`
+	ID    string `json:"id"`
+	Size  int64  `json:"size"`
+	Done  []bool `json:"done"` // per chunk
 }
+
+const recordOwner = "bnd download"
+
+// ErrOccupied means a file bnd did not create sits where the download keeps
+// its part file or resume record; bnd will not overwrite it.
+var ErrOccupied = errors.New("文件已被占用")
 
 // Run downloads into Dest+PartSuffix and renames it to Dest when complete.
 // An earlier interrupted run of the same file is resumed.
 func (d *Download) Run(ctx context.Context) error {
 	part := d.Dest + PartSuffix
 	j := &job{Download: d, recPath: part + ".json"}
-	j.rec = d.resumable(part, j.recPath)
-	flags := os.O_RDWR | os.O_CREATE
-	if j.rec == nil {
-		// Start over; drop the old record first so a crash cannot pair it with the new part.
-		if err := os.Remove(j.recPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
-		j.rec = &record{ID: d.ID, Size: d.Size, Done: make([]bool, d.chunks())}
-		flags |= os.O_TRUNC
-	}
-	f, err := os.OpenFile(part, flags, 0o644)
+	f, rec, err := d.open(part, j.recPath)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	if err := f.Truncate(d.Size); err != nil {
-		return err
-	}
+	j.rec = rec
 	j.f = f
 	for i, done := range j.rec.Done {
 		if done && d.Progress != nil {
@@ -222,10 +218,20 @@ func (d *Download) fetchRange(ctx context.Context, f *os.File, link string, star
 	}
 	w := &offsetWriter{f: f, off: start, progress: d.Progress}
 	n, err := io.Copy(w, body)
-	if err == nil && start+n < end {
+	switch {
+	case err != nil:
+	case start+n < end:
 		err = io.ErrUnexpectedEOF
+	case extra(resp.Body):
+		err = fmt.Errorf("下载 %d-%d: 服务器返回的内容比请求的长", start, end-1)
 	}
 	return n, err
+}
+
+// extra reports whether r has bytes left.
+func extra(r io.Reader) bool {
+	n, _ := r.Read(make([]byte, 1))
+	return n > 0
 }
 
 // checkRange accepts only a response carrying exactly bytes [start, end) of
@@ -254,19 +260,39 @@ func (d *Download) chunkLen(i int) int64 {
 	return min(chunkSize, d.Size-int64(i)*chunkSize)
 }
 
-// resumable returns the saved record if it belongs to this version of the
-// file and its part file is intact, or nil to start over.
-func (d *Download) resumable(part, recPath string) *record {
+// open returns the part file and its record: bnd's own intact part of this
+// version of the file to resume, or else a new one. Files bnd did not create
+// are never overwritten.
+func (d *Download) open(part, recPath string) (*os.File, *record, error) {
 	var rec record
-	data, err := os.ReadFile(recPath)
-	if err != nil || json.Unmarshal(data, &rec) != nil ||
-		rec.ID != d.ID || rec.Size != d.Size || len(rec.Done) != d.chunks() {
-		return nil
+	data, recErr := os.ReadFile(recPath)
+	ours := recErr == nil && json.Unmarshal(data, &rec) == nil && rec.Owner == recordOwner
+	fi, partErr := os.Stat(part)
+	switch {
+	case ours && rec.ID == d.ID && rec.Size == d.Size && len(rec.Done) == d.chunks() && partErr == nil && fi.Size() == d.Size:
+		f, err := os.OpenFile(part, os.O_RDWR, 0)
+		return f, &rec, err
+	case !ours && (recErr == nil || partErr == nil):
+		occupied := recPath
+		if partErr == nil {
+			occupied = part
+		}
+		return nil, nil, fmt.Errorf("%w: %s 不是 bnd 的下载记录, 请移走或删除它", ErrOccupied, occupied)
 	}
-	if fi, err := os.Stat(part); err != nil || fi.Size() != d.Size {
-		return nil
+	// Start over. The record is written before the part is created, so a part
+	// without bnd's record is never bnd's.
+	if ours {
+		os.Remove(part)
 	}
-	return &rec
+	rec = record{Owner: recordOwner, ID: d.ID, Size: d.Size, Done: make([]bool, d.chunks())}
+	if err := saveJSON(recPath, rec); err != nil {
+		return nil, nil, err
+	}
+	f, err := os.OpenFile(part, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return nil, nil, err
+	}
+	return f, &rec, f.Truncate(d.Size)
 }
 
 type offsetWriter struct {
