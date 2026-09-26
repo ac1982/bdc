@@ -406,8 +406,12 @@ func (r renameResult) Human(w io.Writer) {
 	}
 }
 
-func (c *cpCmd) Run(app *App) (Result, error) { return rename(app, c.Paths, "复制", (*baidu.Client).Copy) }
-func (c *mvCmd) Run(app *App) (Result, error) { return rename(app, c.Paths, "移动", (*baidu.Client).Move) }
+func (c *cpCmd) Run(app *App) (Result, error) {
+	return rename(app, c.Paths, "复制", (*baidu.Client).Copy)
+}
+func (c *mvCmd) Run(app *App) (Result, error) {
+	return rename(app, c.Paths, "移动", (*baidu.Client).Move)
+}
 
 type renameOp func(*baidu.Client, context.Context, ...baidu.Rename) error
 

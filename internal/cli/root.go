@@ -31,6 +31,9 @@ type root struct {
 	Cp    cpCmd    `cmd:"" group:"管理" help:"复制文件或目录"`
 	Mv    mvCmd    `cmd:"" group:"管理" help:"移动或重命名文件或目录"`
 
+	Download downloadCmd `cmd:"" group:"传输" help:"下载文件或目录"`
+	Upload   uploadCmd   `cmd:"" group:"传输" help:"上传文件或目录"`
+
 	Config configCmd `cmd:"" group:"其他" help:"显示和修改设置"`
 }
 
