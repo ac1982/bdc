@@ -48,8 +48,10 @@ func (c *Client) Purge(ctx context.Context, fsIDs ...int64) error {
 	return c.recycle(ctx, "delete", "彻底删除", fsIDs)
 }
 
+// recycle restores or purges, waiting for the background task a big batch
+// becomes (small ones are done at once, with no task).
 func (c *Client) recycle(ctx context.Context, action, op string, fsIDs []int64) error {
 	list, _ := json.Marshal(fsIDs)
-	return c.do(ctx, &request{op: op, path: "api/recycle/" + action, query: url.Values{"channel": {"chunlei"}, "async": {"1"}},
-		write: true, form: url.Values{"fidlist": {string(list)}}}, nil)
+	return c.runTask(ctx, &request{op: op, path: "api/recycle/" + action, query: url.Values{"channel": {"chunlei"}, "async": {"1"}},
+		write: true, form: url.Values{"fidlist": {string(list)}}})
 }

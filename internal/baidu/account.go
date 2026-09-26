@@ -2,7 +2,6 @@ package baidu
 
 import (
 	"context"
-	"encoding/json"
 	"net/url"
 )
 
@@ -13,24 +12,13 @@ type User struct {
 }
 
 // Whoami validates the login and returns the user, as the web app learns
-// them from its template variables. The bdstoken comes along and is kept.
+// them from its template variables.
 func (c *Client) Whoami(ctx context.Context) (User, error) {
-	v, err := c.vars(ctx, "bdstoken", "uk", "username")
+	me, err := c.whoami(ctx)
 	if err != nil {
 		return User{}, err
 	}
-	var u User
-	var token string
-	json.Unmarshal(v["uk"], &u.UK)
-	json.Unmarshal(v["username"], &u.Name)
-	json.Unmarshal(v["bdstoken"], &token)
-	if u.UK == 0 || token == "" {
-		return User{}, &Error{Op: "验证登录", Message: "登录无效或已过期", Err: ErrAuth}
-	}
-	c.mu.Lock()
-	c.bdstoken = token
-	c.mu.Unlock()
-	return u, nil
+	return me.user, nil
 }
 
 // Quota is the netdisk capacity in bytes.

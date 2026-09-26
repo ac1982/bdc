@@ -156,9 +156,6 @@ func (c *shareSaveCmd) Run(app *App) (Result, error) {
 		return nil, err
 	}
 	dir := app.abs(c.To)
-	if _, _, err := app.ensureDir(client, dir); err != nil { // Baidu saves only into an existing directory
-		return nil, err
-	}
 	saved, err := client.SaveShare(app.ctx, link, dir)
 	if err != nil {
 		return nil, err

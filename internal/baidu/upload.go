@@ -39,15 +39,13 @@ func (c *Client) RapidUpload(ctx context.Context, p string, h Hashes, r io.Reade
 	if h.Size < rapidWindow {
 		return nil, nil
 	}
-	v, err := c.vars(ctx, "uk")
+	me, err := c.whoami(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var uk int64
-	json.Unmarshal(v["uk"], &uk)
 	now := time.Now().Unix()
 	content := obfuscateMD5(h.ContentMD5)
-	off := rapidOffset(uk, content, now, h.Size)
+	off := rapidOffset(me.user.UK, content, now, h.Size)
 	sample := make([]byte, rapidWindow)
 	n, err := r.ReadAt(sample, off)
 	if err != nil && err != io.EOF {

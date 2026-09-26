@@ -339,7 +339,7 @@ func (c *uploadCmd) Run(app *App) (Result, error) {
 	s := app.cfg.Settings
 	dir := app.abs(c.Args[len(c.Args)-1])
 	r := &batchResult{Files: []*item{}, upload: true, mkdir: func(d string) error {
-		_, _, err := app.ensureDir(client, d)
+		_, _, err := client.EnsureDir(app.ctx, d)
 		return err
 	}}
 	for _, local := range c.Args[:len(c.Args)-1] {

@@ -33,8 +33,15 @@ const (
 type Client struct {
 	http *http.Client
 
-	mu       sync.Mutex
-	bdstoken string // the web app's token for changes; see token
+	mu   sync.Mutex
+	me   *identity // see whoami
+	sign *signature
+}
+
+// identity is what the template variables say about the logged-in user.
+type identity struct {
+	token string // bdstoken, carried by every change
+	user  User
 }
 
 // New returns a client that authenticates with cookies ("BDUSS=…; STOKEN=…; …").
@@ -109,7 +116,7 @@ type request struct {
 	body   []byte     // any other body, of type ctype
 	ctype  string
 	header http.Header // added to (or replacing) the default headers
-	raw    bool        // out is *[]byte: return the body as is, no error decoding
+	raw    bool        // out is *rawResponse: status and body as they are, no decoding
 	once   bool        // do not retry, even a GET
 }
 
@@ -189,14 +196,14 @@ func (c *Client) do(ctx context.Context, req *request, out any) error {
 			if ctx.Err() != nil {
 				return response{}, backoff.Permanent(ctx.Err())
 			}
-			return response{}, err
+			return response{}, withoutQuery(err)
 		}
 		defer resp.Body.Close()
 		data, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return response{}, err
 		}
-		if resp.StatusCode >= 500 && method == http.MethodGet {
+		if resp.StatusCode >= 500 && method == http.MethodGet && !req.once { // retried below
 			return response{}, &Error{Op: req.op, Status: resp.StatusCode, Message: "HTTP " + resp.Status}
 		}
 		return response{resp.StatusCode, data}, nil
@@ -215,13 +222,25 @@ func (c *Client) do(ctx context.Context, req *request, out any) error {
 		return &Error{Op: req.op, Err: err}
 	}
 	if req.raw {
-		if resp.status < 200 || resp.status > 299 {
-			return &Error{Op: req.op, Status: resp.status, Message: fmt.Sprintf("HTTP %d", resp.status)}
-		}
-		*out.(*[]byte) = resp.body
+		*out.(*rawResponse) = rawResponse{resp.status, resp.body}
 		return nil
 	}
 	return decode(req.op, resp.status, resp.body, out)
+}
+
+// withoutQuery drops the query, which holds the bdstoken, from the URL a
+// network error names, so that messages never show it.
+func withoutQuery(err error) error {
+	if ue, ok := errors.AsType[*url.Error](err); ok {
+		ue.URL, _, _ = strings.Cut(ue.URL, "?")
+	}
+	return err
+}
+
+// rawResponse is a response handed back undecoded.
+type rawResponse struct {
+	Status int
+	Body   []byte
 }
 
 // vars reads the web app's template variables (token, uk, user name, the
@@ -235,21 +254,35 @@ func (c *Client) vars(ctx context.Context, fields ...string) (map[string]json.Ra
 	return resp.Result, err
 }
 
-// token is the bdstoken every change carries, fetched once.
-func (c *Client) token(ctx context.Context) (string, error) {
+// whoami fetches the user and the bdstoken once, from the template variables.
+func (c *Client) whoami(ctx context.Context) (*identity, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.bdstoken != "" {
-		return c.bdstoken, nil
+	if c.me != nil {
+		return c.me, nil
 	}
-	v, err := c.vars(ctx, "bdstoken")
+	v, err := c.vars(ctx, "bdstoken", "uk", "username")
+	if err != nil {
+		return nil, err
+	}
+	var me identity
+	json.Unmarshal(v["bdstoken"], &me.token)
+	json.Unmarshal(v["uk"], &me.user.UK)
+	json.Unmarshal(v["username"], &me.user.Name)
+	if me.token == "" || me.user.UK == 0 {
+		return nil, &Error{Op: "验证登录", Message: "登录无效或已过期", Err: ErrAuth}
+	}
+	c.me = &me
+	return c.me, nil
+}
+
+// token is the bdstoken every change carries.
+func (c *Client) token(ctx context.Context) (string, error) {
+	me, err := c.whoami(ctx)
 	if err != nil {
 		return "", err
 	}
-	if json.Unmarshal(v["bdstoken"], &c.bdstoken) != nil || c.bdstoken == "" {
-		return "", &Error{Op: "获取帐号信息", Message: "没有得到 bdstoken", Err: ErrAuth}
-	}
-	return c.bdstoken, nil
+	return me.token, nil
 }
 
 // decode turns a response into out or an error: Baidu's own error codes

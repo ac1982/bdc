@@ -51,6 +51,7 @@ type Fake struct {
 	blocks  map[string][]byte // uploaded blocks by md5
 	recycle map[int64][]*node // removed subtrees by the fs_id of their top
 	tasks   map[int64]string  // offline tasks: id → source URL
+	jobs    map[int64]any     // background tasks (file manager, recycle): id → taskquery answer
 
 	// Requests counts requests by "host/path?method".
 	Requests map[string]int
@@ -74,7 +75,7 @@ func key(p string) string { return strings.ToLower(p) }
 // New returns an empty netdisk (just "/").
 func New() *Fake {
 	f := &Fake{nodes: map[string]*node{}, blocks: map[string][]byte{}, recycle: map[int64][]*node{},
-		tasks: map[int64]string{}, Requests: map[string]int{}}
+		tasks: map[int64]string{}, jobs: map[int64]any{}, Requests: map[string]int{}}
 	f.nodes["/"] = &node{path: "/", dir: true}
 	return f
 }
@@ -160,6 +161,10 @@ func (f *Fake) endpoints() map[string]endpoint {
 		"pan.baidu.com/api/search":      {handle: f.search},
 		"pan.baidu.com/api/create":      {handle: f.create, write: true},
 		"pan.baidu.com/api/filemanager": {handle: f.fileManager, write: true},
+		"pan.baidu.com/share/taskquery": {handle: func(w http.ResponseWriter, r *http.Request) {
+			id, _ := strconv.ParseInt(r.Form.Get("taskid"), 10, 64)
+			reply(w, f.jobs[id])
+		}},
 		"pan.baidu.com/api/rapidupload": {handle: f.rapidUpload, write: true},
 		"pan.baidu.com/api/precreate": {write: true, handle: func(w http.ResponseWriter, r *http.Request) {
 			reply(w, map[string]any{"errno": 0, "return_type": 1, "uploadid": "up-" + r.Form.Get("path")})
@@ -350,8 +355,8 @@ func (f *Fake) search(w http.ResponseWriter, r *http.Request) {
 	dir, word := key(r.Form.Get("dir")), strings.ToLower(r.Form.Get("key"))
 	var found []*node
 	for k, n := range f.nodes {
-		inDir := path.Dir(k) == dir || (r.Form.Get("recursion") == "1" && strings.HasPrefix(k, strings.TrimSuffix(dir, "/")+"/"))
-		if k != "/" && inDir && strings.Contains(path.Base(k), word) {
+		// Like the real service, search always covers the whole subtree.
+		if k != "/" && strings.HasPrefix(k, strings.TrimSuffix(dir, "/")+"/") && strings.Contains(path.Base(k), word) {
 			found = append(found, n)
 		}
 	}
@@ -440,10 +445,13 @@ func (f *Fake) uploadBlock(w http.ResponseWriter, r *http.Request) {
 	reply(w, map[string]any{"md5": md5hex(data)})
 }
 
-// fileManager deletes, renames, copies or moves; items apply in order until
-// one fails (errno 12 and each processed item's errno).
+// fileManager deletes, renames, copies or moves as a background task (the
+// web app's async=2), answered by share/taskquery: a failed task lists only
+// the failed items, and the others are done, as the real service does.
 func (f *Fake) fileManager(w http.ResponseWriter, r *http.Request) {
 	opera, list := r.URL.Query().Get("opera"), r.Form.Get("filelist")
+	id := f.id()
+	reply(w, map[string]any{"errno": 0, "info": []any{}, "taskid": id})
 	if opera == "delete" {
 		var paths []string
 		json.Unmarshal([]byte(list), &paths)
@@ -457,29 +465,28 @@ func (f *Fake) fileManager(w http.ResponseWriter, r *http.Request) {
 				f.recycle[top.id] = removed
 			}
 		}
-		reply(w, map[string]any{"errno": 0})
+		f.jobs[id] = map[string]any{"errno": 0, "status": "success", "task_errno": 0, "list": []any{}}
 		return
 	}
 	var items []struct{ Path, Dest, Newname string }
 	json.Unmarshal([]byte(list), &items)
-	var info []any
+	var failed, done []any
 	for _, it := range items {
 		dest := it.Dest
 		if opera == "rename" {
 			dest = path.Dir(it.Path)
 		}
 		to := path.Join(dest, it.Newname)
-		errno := 0
+		code := 0
 		switch {
 		case f.nodes[key(it.Path)] == nil:
-			errno = -9
+			code = -9
 		case f.nodes[key(to)] != nil && !(opera == "rename" && key(to) == key(it.Path)):
-			errno = -8
+			code = -8
 		}
-		info = append(info, map[string]any{"errno": errno, "path": it.Path})
-		if errno != 0 {
-			reply(w, map[string]any{"errno": 12, "info": info})
-			return
+		if code != 0 {
+			failed = append(failed, map[string]any{"error_code": code, "from": it.Path, "to": to})
+			continue
 		}
 		f.mkdirAll(dest)
 		src := f.nodes[key(it.Path)].path
@@ -493,8 +500,13 @@ func (f *Fake) fileManager(w http.ResponseWriter, r *http.Request) {
 			}
 			f.nodes[key(n.path)] = &n
 		}
+		done = append(done, map[string]any{"from": it.Path, "to": to})
 	}
-	reply(w, map[string]any{"errno": 0, "info": info})
+	if len(failed) > 0 {
+		f.jobs[id] = map[string]any{"errno": 0, "status": "failed", "task_errno": -30, "list": failed}
+	} else {
+		f.jobs[id] = map[string]any{"errno": 0, "status": "success", "task_errno": 0, "list": done}
+	}
 }
 
 // subtree lists the keys of p and everything under it.
@@ -568,7 +580,9 @@ func (f *Fake) restore(w http.ResponseWriter, r *http.Request) {
 		}
 		delete(f.recycle, id)
 	}
-	reply(w, map[string]any{"errno": 0, "faillist": []any{}})
+	id := f.id() // as for a big batch: a background task (small ones answer taskid 0)
+	f.jobs[id] = map[string]any{"errno": 0, "status": "success", "task_errno": 0, "list": []any{}}
+	reply(w, map[string]any{"errno": 0, "faillist": []any{}, "taskid": id})
 }
 
 func (f *Fake) addTask(w http.ResponseWriter, r *http.Request) {

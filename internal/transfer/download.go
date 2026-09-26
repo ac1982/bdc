@@ -11,8 +11,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -219,6 +221,9 @@ func (d *Download) fetchRange(ctx context.Context, f *os.File, link string, star
 	if err != nil {
 		if ctx.Err() != nil {
 			return 0, backoff.Permanent(ctx.Err())
+		}
+		if ue, ok := errors.AsType[*url.Error](err); ok { // the link's query is a signature: keep it out of messages
+			ue.URL, _, _ = strings.Cut(ue.URL, "?")
 		}
 		return 0, err
 	}

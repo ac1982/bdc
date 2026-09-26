@@ -475,3 +475,83 @@ func TestShareCreate(t *testing.T) {
 		t.Errorf("share of a missing path: %d", code)
 	}
 }
+
+// A copy onto an existing file fails (the synchronous form of the API
+// reported success for it without copying).
+func TestCopyOntoExistingFails(t *testing.T) {
+	ta := newTestApp(t)
+	ta.fake.Put("/x/a.txt", []byte("old"), 1)
+	ta.fake.Put("/y/a.txt", []byte("new"), 1)
+	code, doc := ta.json(t, "cp", "/y/a.txt", "/x")
+	if items, _ := doc["items"].([]any); code != 2 || len(items) != 0 || string(ta.fake.Data("/x/a.txt")) != "old" {
+		t.Errorf("%d %v", code, doc)
+	}
+}
+
+func TestSearchDepth(t *testing.T) {
+	ta := newTestApp(t)
+	ta.fake.Put("/d/mid.bin", nil, 1)
+	ta.fake.Put("/d/sub/mid.bin", nil, 1)
+	_, doc := ta.json(t, "search", "--path", "/d", "mid")
+	if got := paths(doc, "files"); strings.Join(got, ",") != "/d/mid.bin" {
+		t.Errorf("search in /d: %v", got)
+	}
+	_, doc = ta.json(t, "search", "-r", "--path", "/d", "mid")
+	if got := paths(doc, "files"); len(got) != 2 {
+		t.Errorf("search -r: %v", got)
+	}
+}
+
+// The shell's history never keeps a login line: it holds the cookies.
+func TestShellHistoryOmitsLogin(t *testing.T) {
+	ta := newTestApp(t)
+	in := filepath.Join(t.TempDir(), "in")
+	os.WriteFile(in, []byte("login --cookies \"BDUSS=SECRET\" --bogus\nls /\nexit\n"), 0o600)
+	var err error
+	if ta.stdin, err = os.Open(in); err != nil {
+		t.Fatal(err)
+	}
+	defer ta.stdin.Close()
+	if code := ta.shell(); code != 0 {
+		t.Fatalf("shell: %d %s", code, ta.stderr.String())
+	}
+	dir, _ := config.Dir()
+	h, _ := os.ReadFile(filepath.Join(dir, "history"))
+	if strings.Contains(string(h), "SECRET") || !strings.Contains(string(h), "ls /") {
+		t.Errorf("history: %q", h)
+	}
+}
+
+// A failed delete task names the failed items; the others were removed.
+func TestRemoveReportsPartialTask(t *testing.T) {
+	ta := newTestApp(t)
+	ta.fake.Put("/d/a", nil, 1)
+	ta.fake.Put("/d/b", nil, 1)
+	ta.fake.Fail = func(endpoint string, n int) any {
+		if endpoint == "pan.baidu.com/share/taskquery" {
+			return map[string]any{"errno": 0, "status": "failed", "task_errno": 132, "list": []any{map[string]any{"from": "/d/b", "error_code": 132}}}
+		}
+		return nil
+	}
+	code, doc := ta.json(t, "rm", "/d/a", "/d/b")
+	if removed, _ := doc["removed"].([]any); code != 4 || len(removed) != 1 || removed[0] != "/d/a" {
+		t.Errorf("%d %v", code, doc)
+	}
+}
+
+func TestRestoreWaitsForTask(t *testing.T) {
+	ta := newTestApp(t)
+	ta.fake.Put("/d/f", nil, 1)
+	ta.run("rm", "/d/f")
+	_, doc := ta.json(t, "recycle", "list")
+	id := fmt.Sprint(int64(doc["files"].([]any)[0].(map[string]any)["fsId"].(float64)))
+	ta.fake.Fail = func(endpoint string, n int) any {
+		if endpoint == "pan.baidu.com/share/taskquery" {
+			return map[string]any{"errno": 0, "status": "failed", "task_errno": -9, "list": []any{}}
+		}
+		return nil
+	}
+	if code := ta.run("recycle", "restore", id); code != 2 {
+		t.Errorf("restore of a failed task: %d %s", code, ta.stderr.String())
+	}
+}

@@ -191,6 +191,19 @@ func (c *Client) Mkdir(ctx context.Context, dir string) (File, error) {
 	return File{FsID: r.FsID, Path: dir, Name: path.Base(dir), IsDir: true, Ctime: time.Unix(r.Ctime, 0), Mtime: time.Unix(r.Mtime, 0)}, nil
 }
 
+// EnsureDir makes sure dir exists as a directory, creating it (and its
+// parents) if needed; created reports whether it was new.
+func (c *Client) EnsureDir(ctx context.Context, dir string) (f File, created bool, err error) {
+	f, err = c.Mkdir(ctx, dir)
+	if !errors.Is(err, ErrExists) {
+		return f, err == nil, err
+	}
+	if f, err = c.Meta(ctx, dir); err == nil && !f.IsDir {
+		err = &Error{Op: "创建目录 " + dir, Message: "已存在, 且不是目录", Err: ErrExists}
+	}
+	return f, false, err
+}
+
 // Remove moves files and directories to the recycle bin and returns the
 // paths removed, which on failure may be some of them. Every path must
 // exist: Baidu itself would silently accept missing ones.
@@ -201,7 +214,7 @@ func (c *Client) Remove(ctx context.Context, paths ...string) ([]string, error) 
 	var done []string
 	for _, batch := range splitBy(paths, byCount[string](maxBatch)) {
 		if err := c.fileManager(ctx, "delete", "删除 "+describe(batch), batch); err != nil {
-			return done, err
+			return append(done, doneItems(batch, func(p string) string { return p }, err)...), err
 		}
 		done = append(done, batch...)
 	}
@@ -238,43 +251,37 @@ func (c *Client) renameAll(ctx context.Context, opera, verb string, pairs []Rena
 	var done []Rename
 	for _, batch := range splitBy(pairs, byCount[Rename](maxBatch)) {
 		if err := c.fileManager(ctx, opera, verb+" "+describeFrom(batch), moves(batch)); err != nil {
-			return append(done, doneItems(batch, err)...), err
+			return append(done, doneItems(batch, func(r Rename) string { return r.From }, err)...), err
 		}
 		done = append(done, batch...)
 	}
 	return done, nil
 }
 
-// doneItems finds the pairs of a failed batch that were done anyway, from
-// Baidu's answer per item: those it reports with errno 0, and those before
-// the first failure, since it applies items in order. The order is only
-// trusted when every failure names one of the pairs; without an answer per
-// item (e.g. a network error) nothing is known to be done.
-func doneItems(batch []Rename, err error) []Rename {
+// doneItems finds the items of a failed batch that were done anyway: Baidu
+// names (by source path) the items that failed, and does the others. Without
+// that answer (e.g. a network error), or with a failure that names none of
+// the items, nothing is known to be done.
+func doneItems[T any](batch []T, source func(T) string, err error) []T {
 	e, ok := errors.AsType[*Error](err)
 	if !ok || len(e.Items) == 0 {
 		return nil
 	}
 	sources := map[string]bool{} // by lower-cased path: Baidu ignores case
-	for _, p := range batch {
-		sources[strings.ToLower(p.From)] = true
+	for _, it := range batch {
+		sources[strings.ToLower(source(it))] = true
 	}
-	errno := map[string]int{}
-	trustOrder := true
+	failed := map[string]bool{}
 	for _, it := range e.Items {
-		k := strings.ToLower(it.Path)
-		errno[k] = int(it.Errno)
-		if it.Errno != 0 && !sources[k] {
-			trustOrder = false // a failure we cannot place
+		if !sources[strings.ToLower(it.Path)] {
+			return nil
 		}
+		failed[strings.ToLower(it.Path)] = true
 	}
-	var done []Rename
-	failed := false
-	for _, p := range batch {
-		code, answered := errno[strings.ToLower(p.From)]
-		failed = failed || (answered && code != 0)
-		if (answered && code == 0) || (!answered && !failed && trustOrder) {
-			done = append(done, p)
+	var done []T
+	for _, it := range batch {
+		if !failed[strings.ToLower(source(it))] {
+			done = append(done, it)
 		}
 	}
 	return done
@@ -288,27 +295,26 @@ func moves(pairs []Rename) []map[string]string {
 	return list
 }
 
-// fileManager runs a batch delete, rename, copy or move, synchronously (the
-// web app polls an async task instead; the sync answer carries each item's
-// result). An existing target fails an item. Deletes say, as the web app's
-// do, that a security check could be shown (newVerify).
+// fileManager runs a batch delete, rename, copy or move as the web app does:
+// as a background task, polled until it ends (the synchronous form can
+// report success for an item it did not do). An existing target fails an
+// item. Deletes say, as the web app's do, that a security check could be
+// shown (newVerify).
 func (c *Client) fileManager(ctx context.Context, opera, op string, list any) error {
 	data, _ := json.Marshal(list)
-	q := url.Values{"opera": {opera}, "async": {"0"}, "onnest": {"fail"}}
+	q := url.Values{"opera": {opera}, "async": {"2"}, "onnest": {"fail"}}
 	if opera == "delete" {
 		q.Set("newVerify", "1")
 	}
-	return c.do(ctx, &request{op: op, path: "api/filemanager", query: q, write: true, form: url.Values{"filelist": {string(data)}}}, nil)
+	return c.runTask(ctx, &request{op: op, path: "api/filemanager", query: q, write: true, form: url.Values{"filelist": {string(data)}}})
 }
 
-// Search finds files under dir whose name contains keyword.
+// Search finds files whose name contains keyword, in dir or (recursive)
+// anywhere under it.
 func (c *Client) Search(ctx context.Context, dir, keyword string, recursive bool) ([]File, error) {
 	var all []File
 	for page := 1; ; page++ {
-		q := url.Values{"key": {keyword}, "dir": {dir}, "num": {"500"}, "page": {strconv.Itoa(page)}}
-		if recursive {
-			q.Set("recursion", "1")
-		}
+		q := url.Values{"key": {keyword}, "dir": {dir}, "num": {"500"}, "page": {strconv.Itoa(page)}, "recursion": {"1"}}
 		var resp struct {
 			List    []rawFile `json:"list"`
 			HasMore int       `json:"has_more"`
@@ -316,7 +322,12 @@ func (c *Client) Search(ctx context.Context, dir, keyword string, recursive bool
 		if err := c.do(ctx, &request{op: "搜索 " + dir, path: "api/search", query: q}, &resp); err != nil {
 			return all, err
 		}
-		all = append(all, files(resp.List)...)
+		for _, f := range files(resp.List) {
+			// Baidu always searches the whole subtree, whatever recursion says.
+			if recursive || strings.EqualFold(path.Dir(f.Path), dir) {
+				all = append(all, f)
+			}
+		}
 		if resp.HasMore == 0 || len(resp.List) == 0 {
 			return all, nil
 		}

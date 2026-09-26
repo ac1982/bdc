@@ -78,17 +78,15 @@ func TestDoneItems(t *testing.T) {
 		err   error
 		froms string
 	}{
-		{"every item answered", &Error{Items: []BatchItem{{"/a", 0}, {"/b", -8}}}, "/a"},
-		{"only the failure answered", &Error{Items: []BatchItem{{"/b", -8}}}, "/a"},
-		{"a later success answered", &Error{Items: []BatchItem{{"/a", -8}, {"/c", 0}}}, "/c"},
-		{"failure without a path", &Error{Items: []BatchItem{{"", -9}}}, ""},
-		{"failure without a path, a success answered", &Error{Items: []BatchItem{{"/a", 0}, {"", -9}}}, "/a"},
-		{"path in another case", &Error{Items: []BatchItem{{"/B", -8}}}, "/a"},
+		{"one failed", &Error{Items: []BatchItem{{"/b", -8}}}, "/a,/c"},
+		{"path in another case", &Error{Items: []BatchItem{{"/B", -8}}}, "/a,/c"},
+		{"all failed", &Error{Items: []BatchItem{{"/a", -8}, {"/b", -9}, {"/c", -8}}}, ""},
+		{"a failure without a path", &Error{Items: []BatchItem{{"", -9}}}, ""},
 		{"no answer per item", &Error{Code: -6}, ""},
 		{"not a Baidu error", context.Canceled, ""},
 	} {
 		var froms []string
-		for _, p := range doneItems(batch, c.err) {
+		for _, p := range doneItems(batch, func(r Rename) string { return r.From }, c.err) {
 			froms = append(froms, p.From)
 		}
 		if got := strings.Join(froms, ","); got != c.froms {
@@ -133,5 +131,38 @@ func TestNewestCookieWins(t *testing.T) {
 	}
 	if strings.Contains(sent[1], "stale") || !strings.Contains(sent[1], "BDCLND=fresh") || !strings.Contains(sent[1], "BDUSS=x") {
 		t.Fatalf("second request sent %q", sent[1])
+	}
+}
+
+// A share link that does not exist: Baidu answers 404, claiming gzip for a
+// plain body.
+func TestSaveMissingShare(t *testing.T) {
+	hc := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		h := http.Header{"Content-Type": {"text/html"}}
+		if r.Header.Get("Accept-Encoding") != "identity" {
+			h.Set("Content-Encoding", "gzip")
+		}
+		return &http.Response{StatusCode: 404, Header: h, Body: io.NopCloser(strings.NewReader("<!DOCTYPE html>error-404")), Request: r}, nil
+	})}
+	c, _ := New(hc, baidutest.Cookies)
+	link, _ := ParseShareLink("https://pan.baidu.com/s/1nope", "")
+	if _, err := c.SaveShare(context.Background(), link, "/x"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// A network error names the URL, but not its query: that holds the bdstoken.
+func TestNetworkErrorHidesToken(t *testing.T) {
+	fake := baidutest.New().Client().Transport
+	hc := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/api/create" {
+			return nil, errors.New("connection reset")
+		}
+		return fake.RoundTrip(r)
+	})}
+	c, _ := New(hc, baidutest.Cookies)
+	_, err := c.Mkdir(context.Background(), "/x")
+	if err == nil || strings.Contains(err.Error(), "bdstoken") || !strings.Contains(err.Error(), "connection reset") {
+		t.Fatalf("err = %v", err)
 	}
 }

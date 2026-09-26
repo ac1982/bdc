@@ -22,11 +22,15 @@ import (
 func (a *App) shell() int {
 	dir, _ := config.Dir()
 	rl, err := readline.NewEx(&readline.Config{
-		Prompt:          a.prompt(),
-		HistoryFile:     filepath.Join(dir, "history"),
-		AutoComplete:    &completer{app: a, commands: commandNames()},
-		InterruptPrompt: "^C",
-		EOFPrompt:       "exit",
+		Prompt:                 a.prompt(),
+		HistoryFile:            filepath.Join(dir, "history"),
+		DisableAutoSaveHistory: true, // saved below, but never a login: it holds the cookies
+		AutoComplete:           &completer{app: a, commands: commandNames()},
+		Stdin:                  a.stdin,
+		Stdout:                 a.stderr,
+		Stderr:                 a.stderr,
+		InterruptPrompt:        "^C",
+		EOFPrompt:              "exit",
 	})
 	if err != nil {
 		return a.report("", nil, err)
@@ -46,9 +50,13 @@ func (a *App) shell() int {
 			fmt.Fprintln(a.stderr, "错误:", err)
 			continue
 		}
-		switch {
-		case len(args) == 0:
+		if len(args) == 0 {
 			continue
+		}
+		if args[0] != "login" {
+			rl.SaveHistory(line)
+		}
+		switch {
 		case args[0] == "exit" || args[0] == "quit":
 			return 0
 		case args[0] == "help":

@@ -370,7 +370,7 @@ func (c *mkdirCmd) Run(app *App) (Result, error) {
 	var errs []error
 	for _, d := range c.Dirs {
 		p := app.abs(d)
-		switch f, created, err := app.ensureDir(client, p); {
+		switch f, created, err := client.EnsureDir(app.ctx, p); {
 		case err != nil:
 			errs = append(errs, err)
 		case created:
@@ -380,19 +380,6 @@ func (c *mkdirCmd) Run(app *App) (Result, error) {
 		}
 	}
 	return r, errors.Join(errs...)
-}
-
-// ensureDir makes sure dir exists as a directory, creating it (and its
-// parents) if needed; created reports whether it was new.
-func (a *App) ensureDir(client *baidu.Client, dir string) (f baidu.File, created bool, err error) {
-	f, err = client.Mkdir(a.ctx, dir)
-	if !errors.Is(err, baidu.ErrExists) {
-		return f, err == nil, err
-	}
-	if f, err = client.Meta(a.ctx, dir); err == nil && !f.IsDir {
-		err = inputf("%s 已存在, 且不是目录", dir)
-	}
-	return f, false, err
 }
 
 // rm

@@ -19,8 +19,8 @@ that is noted; bdc does not use them.
   where the token, the user (`uk`, `username`) and the download signature's inputs (`sign1`, `sign3`, `timestamp`)
   come from. A bad login answers `errno -6`. (Earlier tools learnt the uid from a tieba login; nothing needs it now.)
 - **Errors**: `errno` (or `error_code` on the few PCS-hosted calls) in the JSON body; HTTP status is not reliable on
-  its own. A batch call that fails some items answers `errno 12` with `info[]` holding each processed item's
-  `{path, errno}`; items are applied in order until one fails.
+  its own. A batch call that fails some items answers `errno 12` with `info[]` holding each item's `{path, errno}`,
+  not in request order; the items not named as failed were done.
 
 | code | meaning | bdc's class |
 |---|---|---|
@@ -40,10 +40,15 @@ that is noted; bdc does not use them.
 |---|---|---|
 | list | `GET /api/list?dir=&order=name&desc=0&num=1000&page=n` | pages until a short one. A file lists as empty; missing dir -9. Items have no md5. |
 | metadata | `GET /api/filemetas?target=<JSON paths>&dlink=0&blocks=1` | `info[]` with `block_list`. A missing path fails the batch (`errno 12`, `info[0].errno -9`, no path). Paths go in the URL: split long lists (servers refuse URLs over ~8 KB). |
-| search | `GET /api/search?key=&dir=&recursion=1&num=500&page=n` | matching is fuzzy (`exp9m` finds `export.py`); `dir` is honoured; `has_more`. |
+| search | `GET /api/search?key=&dir=&recursion=1&num=500&page=n` | matching is fuzzy (`exp9m` finds `export.py`); always searches the whole subtree of `dir` (`recursion` is ignored; bdc filters for a one-level search); `has_more`. |
 | mkdir | `POST /api/create?a=commit` form `path, isdir=1, rtype=0, block_list=[]` | creates parents. **Without `rtype` Baidu renames on a clash** (`name_YYYYMMDD_HHMMSS`); `rtype=0` fails with -8. |
-| delete / rename / copy / move | `POST /api/filemanager?opera=<op>&async=0&onnest=fail` form `filelist=<JSON>` | delete: `["/p",…]` plus `newVerify=1`; rename: `[{path, newname}]` (can change only the case); copy/move: `[{path, dest, newname}]`, missing `dest` dirs are created. The web app uses `async=2` and polls `share/taskquery`; `async=0` answers synchronously with each item's result. **Delete of a missing path reports success**: check with filemetas first. Batches of up to 999 items (bdc uses 500). |
+| delete / rename / copy / move | `POST /api/filemanager?opera=<op>&async=2&onnest=fail` form `filelist=<JSON>` → `taskid` | delete: `["/p",…]` plus `newVerify=1`; rename: `[{path, newname}]` (can change only the case); copy/move: `[{path, dest, newname}]`, missing `dest` dirs are created. Poll the task (below). **Delete of a missing path reports success**: check with filemetas first. Batches of up to 999 items (bdc uses 500). |
 | quota | `GET /api/quota?checkfree=1` | `total`, `used`. |
+
+**Tasks.** `GET /share/taskquery?taskid=` → `status` (`pending`, `running`, `success`, `failed`). A failed task has
+`task_errno` (-30 on a clash) and `list[]{from, to, error_code}` naming **only the failed items**; the others were done.
+(`async=0` answers synchronously, but a one-item copy onto an existing file there reports `errno 0` with only a
+top-level `newno -8`, and nothing is copied; the web app's `async=2` has no such gap.)
 
 **md5.** Baidu's md5 fields are obfuscated (swap the four 8-digit blocks back, XOR each hex digit with its position mod
 16; the tenth character, a letter `g`–`v`, marks obfuscation). When `block_list` has exactly one entry it is the content
