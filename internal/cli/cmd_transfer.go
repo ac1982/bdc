@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -70,35 +71,37 @@ func (r *batchResult) Human(w io.Writer) {
 			total += it.Size
 		}
 	}
-	fmt.Fprintf(w, "%s结束: ", r.verb())
-	first := true
+	var counts []string
 	for _, s := range []string{"downloaded", "uploaded", "rapid", "skipped", "failed"} {
-		if n := r.Summary[s]; n > 0 || (s == "failed" && first) {
-			if !first {
-				fmt.Fprint(w, ", ")
-			}
-			fmt.Fprintf(w, "%s %d", statusName[s], n)
-			first = false
+		if n := r.Summary[s]; n > 0 {
+			counts = append(counts, fmt.Sprintf("%s %d", statusName[s], n))
 		}
 	}
-	fmt.Fprintf(w, "; 传输 %s\n", size(total))
+	fmt.Fprintf(w, "%s结束: %s; 传输 %s\n", r.verb(), strings.Join(counts, ", "), size(total))
 }
 
 var statusName = map[string]string{
 	"downloaded": "已下载", "uploaded": "已上传", "rapid": "秒传", "skipped": "跳过", "failed": "失败",
 }
 
-// run executes fn for each undecided item, parallel files at a time. It
-// keeps going when a file fails; the error summarises all failures.
-func (r *batchResult) run(ctx context.Context, parallel int, m *meter, fn func(context.Context, *item) error) error {
-	var g errgroup.Group
-	g.SetLimit(max(1, parallel))
+// run transfers each item not decided while planning, the configured number
+// of files at a time, showing progress. fn reports bytes to progress. It keeps
+// going when a file fails; the error summarises all failures.
+func (r *batchResult) run(app *App, fn func(ctx context.Context, it *item, progress func(int64)) error) error {
+	var todo []*item
+	var total int64
 	for _, it := range r.Files {
-		if it.Status != "" {
-			continue // decided while planning
+		if it.Status == "" {
+			todo = append(todo, it)
+			total += it.Size
 		}
+	}
+	m := app.newMeter(total, r.verb())
+	var g errgroup.Group
+	g.SetLimit(max(1, app.cfg.Settings.Parallel))
+	for _, it := range todo {
 		g.Go(func() error {
-			if err := fn(ctx, it); err != nil {
+			if err := fn(app.ctx, it, m.add); err != nil {
 				it.fail(err)
 				m.logf("失败 %s: %v", r.arrow(it), err)
 			} else {
@@ -168,31 +171,22 @@ func (c *downloadCmd) Run(app *App) (Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	var total int64
 	for _, p := range paths {
-		err := c.plan(app.ctx, client, p, saveTo, func(it *item) {
-			total += it.Size
-			r.Files = append(r.Files, it)
-		})
-		if err != nil {
+		if err := c.plan(app.ctx, client, p, saveTo, &r.Files); err != nil {
 			return r, err
 		}
 	}
 
-	m := app.newMeter(total, "下载")
 	lim := limiter(s.DownloadLimit)
-	conns := c.Conns
-	if conns <= 0 {
-		conns = s.Connections
-	}
-	err = r.run(app.ctx, s.Parallel, m, func(ctx context.Context, it *item) error {
+	conns := cmp.Or(c.Conns, s.Connections)
+	err = r.run(app, func(ctx context.Context, it *item, progress func(int64)) error {
 		if err := os.MkdirAll(filepath.Dir(it.Local), 0o755); err != nil {
 			return err
 		}
 		d := &transfer.Download{
 			Client: client.HTTP(), Header: baidu.DownloadHeader(),
 			URLs: func(ctx context.Context) ([]string, error) { return client.DownloadURLs(ctx, it.Remote) },
-			Size: it.Size, Dest: it.Local, Conns: conns, Limit: lim, Progress: m.add,
+			Size: it.Size, Dest: it.Local, Conns: conns, Limit: lim, Progress: progress,
 		}
 		if err := d.Run(ctx); err != nil {
 			return err
@@ -204,7 +198,7 @@ func (c *downloadCmd) Run(app *App) (Result, error) {
 }
 
 // plan adds the files under remote path p, marking those already present.
-func (c *downloadCmd) plan(ctx context.Context, client *baidu.Client, p, saveTo string, add func(*item)) error {
+func (c *downloadCmd) plan(ctx context.Context, client *baidu.Client, p, saveTo string, items *[]*item) error {
 	root, err := client.Meta(ctx, p)
 	if err != nil {
 		return err
@@ -225,7 +219,7 @@ func (c *downloadCmd) plan(ctx context.Context, client *baidu.Client, p, saveTo 
 		if _, err := os.Stat(dest); err == nil && !c.Overwrite {
 			it.Status, it.Reason = "skipped", "exists"
 		}
-		add(it)
+		*items = append(*items, it)
 		return nil
 	}
 	if err := visit(root); err != nil || !root.IsDir {
@@ -253,13 +247,8 @@ func (c *uploadCmd) Run(app *App) (Result, error) {
 	s := app.cfg.Settings
 	dir := app.abs(c.Args[len(c.Args)-1])
 	r := &batchResult{Files: []*item{}, upload: true}
-	var total int64
 	for _, local := range c.Args[:len(c.Args)-1] {
-		err := planUpload(local, dir, func(it *item) {
-			total += it.Size
-			r.Files = append(r.Files, it)
-		})
-		if err != nil {
+		if err := planUpload(local, dir, &r.Files); err != nil {
 			return nil, err
 		}
 	}
@@ -267,17 +256,13 @@ func (c *uploadCmd) Run(app *App) (Result, error) {
 		return r, err
 	}
 
-	m := app.newMeter(total, "上传")
 	lim := limiter(s.UploadLimit)
-	conns := c.Conns
-	if conns <= 0 {
-		conns = min(s.Connections, 4)
-	}
+	conns := cmp.Or(c.Conns, s.Connections)
 	stateDir, _ := config.Dir()
-	err = r.run(app.ctx, s.Parallel, m, func(ctx context.Context, it *item) error {
+	err = r.run(app, func(ctx context.Context, it *item, progress func(int64)) error {
 		u := &transfer.Upload{
 			API: client, Local: it.Local, Remote: it.Remote, Overwrite: it.overwrite,
-			Conns: conns, Limit: lim, Progress: m.add, StateDir: stateDir,
+			Conns: conns, Limit: lim, Progress: progress, StateDir: stateDir,
 		}
 		_, rapid, err := u.Run(ctx)
 		if err != nil {
@@ -293,7 +278,7 @@ func (c *uploadCmd) Run(app *App) (Result, error) {
 }
 
 // planUpload adds the files of a local file or directory, uploaded under dir.
-func planUpload(local, dir string, add func(*item)) error {
+func planUpload(local, dir string, items *[]*item) error {
 	abs, err := filepath.Abs(local)
 	if err != nil {
 		return err
@@ -306,7 +291,7 @@ func planUpload(local, dir string, add func(*item)) error {
 		return err
 	}
 	if !fi.IsDir() {
-		add(&item{Local: abs, Remote: path.Join(dir, fi.Name()), Size: fi.Size()})
+		*items = append(*items, &item{Local: abs, Remote: path.Join(dir, fi.Name()), Size: fi.Size()})
 		return nil
 	}
 	base := path.Join(dir, fi.Name())
@@ -322,7 +307,7 @@ func planUpload(local, dir string, add func(*item)) error {
 			return nil
 		}
 		rel, _ := filepath.Rel(abs, p)
-		add(&item{Local: p, Remote: path.Join(base, filepath.ToSlash(rel)), Size: info.Size()})
+		*items = append(*items, &item{Local: p, Remote: path.Join(base, filepath.ToSlash(rel)), Size: info.Size()})
 		return nil
 	})
 }

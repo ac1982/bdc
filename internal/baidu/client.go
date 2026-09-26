@@ -71,16 +71,6 @@ func New(hc *http.Client, cookies string, uid uint64) (*Client, error) {
 // HTTP is the underlying client, cookies included, for transferring file data.
 func (c *Client) HTTP() *http.Client { return c.http }
 
-// cookie returns the value of a cookie sent to pan.baidu.com.
-func (c *Client) cookie(name string) string {
-	for _, ck := range c.http.Jar.Cookies(&url.URL{Scheme: "https", Host: "pan.baidu.com"}) {
-		if ck.Name == name {
-			return ck.Value
-		}
-	}
-	return ""
-}
-
 // request describes one API call.
 type request struct {
 	op     string     // for error messages, e.g. "删除 /a"

@@ -110,7 +110,9 @@ func (c *Client) Walk(ctx context.Context, dir string, fn func(File) error) erro
 	return nil
 }
 
-// SkipDir tells Walk not to descend into a directory.
+// SkipDir tells Walk not to descend into a directory, like fs.SkipDir.
+//
+//lint:ignore ST1012 named after fs.SkipDir
 var SkipDir = errors.New("skip this directory")
 
 // Meta describes one file or directory.

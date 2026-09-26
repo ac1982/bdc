@@ -139,11 +139,6 @@ func (a *App) report(command string, res Result, err error) int {
 	return 0
 }
 
-// logf writes a progress or log line for people; never part of the result.
-func (a *App) logf(format string, args ...any) {
-	fmt.Fprintf(a.stderr, format+"\n", args...)
-}
-
 // confirm asks a yes/no question unless yes is already given. Without a
 // terminal it refuses instead of waiting for an answer that cannot come.
 func (a *App) confirm(yes bool, question string) error {
