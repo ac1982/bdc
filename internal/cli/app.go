@@ -1,4 +1,4 @@
-// Package cli is bnd's command line: commands, output, exit codes and the
+// Package cli is bdc's command line: commands, output, exit codes and the
 // interactive shell. It is the only package that prints.
 package cli
 
@@ -27,7 +27,7 @@ import (
 // Version is set at build time with -ldflags "-X ...cli.Version=v1.2.3".
 var Version = "dev"
 
-// App is the state one run of bnd shares between commands: in the
+// App is the state one run of bdc shares between commands: in the
 // interactive shell it lives across many commands.
 type App struct {
 	ctx    context.Context
@@ -44,7 +44,7 @@ type App struct {
 
 const description = `百度网盘命令行客户端, 为人和 AI agent 而生.
 
-  网盘路径是绝对路径, 或相对于 cd 设定的工作目录; 通配符 * ? [ ] 由 bnd 展开.
+  网盘路径是绝对路径, 或相对于 cd 设定的工作目录; 通配符 * ? [ ] 由 bdc 展开.
   --json: stdout 只有一份 JSON 文档 (含 ok, command, 失败时 error), 进度和日志在 stderr.
   退出码: 0 成功, 1 服务器/网络/传输失败, 2 输入有误 (不存在, 已存在, 无匹配, 提取码错误),
           3 缺少依赖或权限, 4 未登录或登录过期, 64 命令行有误或需要终端, 130 已取消.
@@ -55,7 +55,7 @@ type runner interface {
 	Run(app *App) (Result, error)
 }
 
-// Main runs bnd with the arguments after the program name and returns the exit code.
+// Main runs bdc with the arguments after the program name and returns the exit code.
 func Main(args []string) int {
 	defer func() { stopCassette() }() // set once the client is built
 	app := &App{ctx: context.Background(), json: hasJSONFlag(args), stdout: os.Stdout, stderr: os.Stderr, stdin: os.Stdin}
@@ -67,7 +67,7 @@ func Main(args []string) int {
 	app.cfg = cfg
 	if len(args) == 0 {
 		if !app.interactive() {
-			return app.report("", nil, usagef("没有指定命令; 交互模式需要终端, 用 bnd --help 查看命令"))
+			return app.report("", nil, usagef("没有指定命令; 交互模式需要终端, 用 bdc --help 查看命令"))
 		}
 		return app.shell()
 	}
@@ -85,7 +85,7 @@ func (a *App) exec(args []string) int {
 	var root root
 	var help bytes.Buffer
 	parser, err := kong.New(&root,
-		kong.Name("bnd"),
+		kong.Name("bdc"),
 		kong.Description(description),
 		kong.NoDefaultHelp(),
 		kong.Writers(&help, a.stderr),
@@ -112,13 +112,13 @@ func (a *App) exec(args []string) int {
 	case errors.Is(err, errShowVersion):
 		return a.report("version", versionResult{Version}, nil)
 	case err != nil:
-		return a.report(command, nil, usagef("%v (用 bnd %s --help 查看用法)", err, strings.TrimSpace(command)))
+		return a.report(command, nil, usagef("%v (用 bdc %s --help 查看用法)", err, strings.TrimSpace(command)))
 	}
 
 	a.json = root.JSON
 	cmd, ok := kctx.Selected().Target.Addr().Interface().(runner)
 	if !ok {
-		return a.report(command, nil, usagef("%s 需要子命令, 用 bnd %s --help 查看", command, command))
+		return a.report(command, nil, usagef("%s 需要子命令, 用 bdc %s --help 查看", command, command))
 	}
 	res, err := cmd.Run(a)
 	return a.report(command, res, err)

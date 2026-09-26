@@ -1,4 +1,4 @@
-// Package config reads and writes bnd's settings and accounts.
+// Package config reads and writes bdc's settings and accounts.
 package config
 
 import (
@@ -11,7 +11,7 @@ import (
 )
 
 // EnvDir overrides the directory holding config.json.
-const EnvDir = "BND_CONFIG_DIR"
+const EnvDir = "BDC_CONFIG_DIR"
 
 // Config is the whole file. Accounts hold login cookies; Settings never do,
 // so Settings alone is safe to print.
@@ -60,7 +60,7 @@ func Dir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(d, "bnd"), nil
+	return filepath.Join(d, "bdc"), nil
 }
 
 // Load reads the config, or returns defaults if there is none yet.

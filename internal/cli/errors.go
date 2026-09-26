@@ -52,7 +52,7 @@ func inputf(format string, a ...any) error { return withKind(Input, fmt.Errorf(f
 func usagef(format string, a ...any) error { return withKind(Usage, fmt.Errorf(format, a...)) }
 
 // errNotLoggedIn is returned by commands that need an account when there is none.
-var errNotLoggedIn = withKind(Auth, errors.New("尚未登录, 请先运行 bnd login"))
+var errNotLoggedIn = withKind(Auth, errors.New("尚未登录, 请先运行 bdc login"))
 
 // classify finds the kind of err: an explicit mark wins, then cancellation,
 // then what Baidu said, then failed.

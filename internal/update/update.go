@@ -1,4 +1,4 @@
-// Package update installs newer releases of bnd from GitHub.
+// Package update installs newer releases of bdc from GitHub.
 package update
 
 import (
@@ -47,7 +47,7 @@ func Latest(ctx context.Context) (*Release, error) {
 		return nil, fmt.Errorf("查询最新版本: %w", err)
 	}
 	r := &Release{Version: gh.Tag, URL: gh.URL}
-	want := fmt.Sprintf("bnd-%s-%s-%s.%s", gh.Tag, runtime.GOOS, runtime.GOARCH, archiveExt())
+	want := fmt.Sprintf("bdc-%s-%s-%s.%s", gh.Tag, runtime.GOOS, runtime.GOARCH, archiveExt())
 	for _, a := range gh.Assets {
 		switch a.Name {
 		case want:
@@ -109,11 +109,11 @@ func hasChecksum(sums, sum, name string) bool {
 	return false
 }
 
-// extract returns the bnd executable inside a .tar.gz or .zip archive.
+// extract returns the bdc executable inside a .tar.gz or .zip archive.
 func extract(archive []byte) ([]byte, error) {
-	name := "bnd"
+	name := "bdc"
 	if runtime.GOOS == "windows" {
-		name = "bnd.exe"
+		name = "bdc.exe"
 		zr, err := zip.NewReader(bytes.NewReader(archive), int64(len(archive)))
 		if err != nil {
 			return nil, err

@@ -24,9 +24,9 @@ func TestHelp(t *testing.T) {
 		args := append(strings.Fields(c), "--help")
 		out, err := exec.Command(binary, args...).Output()
 		if err != nil {
-			t.Fatalf("bnd %s: %v", strings.Join(args, " "), err)
+			t.Fatalf("bdc %s: %v", strings.Join(args, " "), err)
 		}
-		b.WriteString("=== bnd " + strings.Join(args, " ") + "\n" + string(out) + "\n")
+		b.WriteString("=== bdc " + strings.Join(args, " ") + "\n" + string(out) + "\n")
 	}
 	got := b.String()
 	if *update {

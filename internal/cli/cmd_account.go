@@ -151,7 +151,7 @@ func (c *suCmd) Run(app *App) (Result, error) {
 			return newAccountResult(app.cfg.Current()), nil
 		}
 	}
-	return nil, inputf("没有帐号 %s, 用 bnd users 查看", c.User)
+	return nil, inputf("没有帐号 %s, 用 bdc users 查看", c.User)
 }
 
 type quotaCmd struct{}

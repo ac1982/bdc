@@ -68,4 +68,4 @@ type versionResult struct {
 	Version string `json:"version"`
 }
 
-func (v versionResult) Human(w io.Writer) { fmt.Fprintln(w, "bnd", v.Version) }
+func (v versionResult) Human(w io.Writer) { fmt.Fprintln(w, "bdc", v.Version) }

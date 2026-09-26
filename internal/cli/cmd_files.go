@@ -505,7 +505,7 @@ func (rn renamer) run(app *App, args []string) (Result, error) {
 // caseOnly renames a to A. Baidu ignores case, so it sees A as taken by a
 // itself; the rename goes by way of a temporary name.
 func (rn renamer) caseOnly(app *App, client *baidu.Client, src, dst string) (Result, error) {
-	tmp := dst + ".bnd-rename"
+	tmp := dst + ".bdc-rename"
 	if _, err := client.Move(app.ctx, baidu.Rename{From: src, To: tmp}); err != nil {
 		return nil, err
 	}

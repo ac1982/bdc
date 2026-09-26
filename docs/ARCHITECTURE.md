@@ -1,6 +1,6 @@
 # Architecture
 
-bnd is a command-line client for Baidu Netdisk, for people and AI agents. This
+bdc is a command-line client for Baidu Netdisk, for people and AI agents. This
 document is the map: what lives where, and the few rules that keep it small.
 
 ## Layers
@@ -40,7 +40,7 @@ Errors are `*baidu.Error{Op, Code, Message}`. Callers classify with
 ## `internal/transfer`
 
 - `Download` fetches one remote file with N ranged connections into
-  `name.bnd-part`, records finished ranges beside it, and renames on success.
+  `name.bdc-part`, records finished ranges beside it, and renames on success.
   An interrupted download resumes from the record. Expired links are refreshed
   through a callback, so the engine does not know about Baidu.
 - `Upload` hashes a local file, tries an instant upload, otherwise uploads
@@ -93,18 +93,18 @@ Errors map to exit codes in one place (`exit.go`):
 
 ## Testing
 
-- `internal/baidutest` is an in-memory Baidu that speaks every endpoint bnd
+- `internal/baidutest` is an in-memory Baidu that speaks every endpoint bdc
   uses and fails the way the real service does (e.g. `errno -6` for a bad
   login, empty listings for files). Unit tests of `internal/baidu` and
   `internal/cli` run whole commands against it, so CI covers the command
   behaviour without an account.
 - `internal/transfer`: local `httptest` servers and fake upload targets:
   resuming, stale records, wrong ranges, expiring links.
-- Live tests (`BND_LIVE_COOKIES=… go test ./internal/... -run Live`) exercise
+- Live tests (`BDC_LIVE_COOKIES=… go test ./internal/... -run Live`) exercise
   the API and transfers against the real service, in a fresh directory under
-  `/bnd-test`.
+  `/bdc-test`.
 - `e2e` runs the built binary through scenarios. With `-record` it talks to
-  Baidu with a real account, in a fresh directory under `/bnd-test`, and saves
+  Baidu with a real account, in a fresh directory under `/bdc-test`, and saves
   the HTTP exchanges; by default it replays them offline and compares stdout,
   stderr and exit codes with the recorded run. The recording transport is
   compiled in only with `-tags e2e`, which the e2e test builds with; release

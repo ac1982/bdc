@@ -14,11 +14,11 @@ import (
 )
 
 // TestLive exercises the write paths against Baidu with a real account, only
-// under /bnd-test. It runs when BND_LIVE_COOKIES holds the cookies.
+// under /bdc-test. It runs when BDC_LIVE_COOKIES holds the cookies.
 func TestLive(t *testing.T) {
-	cookies := os.Getenv("BND_LIVE_COOKIES")
+	cookies := os.Getenv("BDC_LIVE_COOKIES")
 	if cookies == "" {
-		t.Skip("set BND_LIVE_COOKIES to run live tests")
+		t.Skip("set BDC_LIVE_COOKIES to run live tests")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -29,7 +29,7 @@ func TestLive(t *testing.T) {
 	if _, err := c.Whoami(ctx); err != nil {
 		t.Fatal(err)
 	}
-	root := fmt.Sprintf("/bnd-test/live-%d", time.Now().UnixNano())
+	root := fmt.Sprintf("/bdc-test/live-%d", time.Now().UnixNano())
 	c.Remove(ctx, root)
 	t.Cleanup(func() { c.Remove(context.Background(), root) })
 
@@ -51,7 +51,7 @@ func TestLive(t *testing.T) {
 	}
 	// A single-block file uploaded twice: the second time is instant. (After a
 	// multi-block upload Baidu stores md5(block list), so those never match.)
-	small := writeTemp(t, []byte("bnd live "+time.Now().String()))
+	small := writeTemp(t, []byte("bdc live "+time.Now().String()))
 	for i, want := range []bool{false, true} {
 		su := &Upload{API: c, Local: small, Remote: root + "/small" + string(rune('0'+i)), StateDir: t.TempDir()}
 		if _, rapid, err := su.Run(ctx); err != nil || rapid != want {
@@ -99,12 +99,12 @@ func TestLive(t *testing.T) {
 	}
 
 	// Share, then try to save our own share (Baidu refuses with errno 2).
-	s, err := c.CreateShare(ctx, "bndt", 1, root+"/big.bin")
+	s, err := c.CreateShare(ctx, "bdct", 1, root+"/big.bin")
 	if err != nil {
 		t.Fatal("share:", err)
 	}
 	t.Logf("share: id=%d expires=%v", s.ID, s.Expires)
-	link, _ := baidu.ParseShareLink(s.Link, "bndt")
+	link, _ := baidu.ParseShareLink(s.Link, "bdct")
 	saved, err := c.SaveShare(ctx, link, root+"/sub")
 	t.Logf("save own share: saved=%v err=%v", saved, err)
 	bad, _ := baidu.ParseShareLink(s.Link, "zzzz")

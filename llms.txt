@@ -1,12 +1,12 @@
-# bnd
+# bdc
 
 > A command-line client for Baidu Netdisk (百度网盘): list, search, manage, upload, download, share and save shares. One binary for macOS, Linux and Windows. Built to be driven by AI agents: `--json` output, meaningful exit codes, no prompts without a terminal. Human-readable output is Chinese; the JSON is language-neutral.
 
 ## Quick start
 
-1. `bnd who --json`. If `loggedIn` is false, log in: `bnd login --cookies "BDUSS=…; STOKEN=…"` (or `--from-chrome` / `--from-edge`).
-2. Inspect: `bnd ls --json <dir>` → `files[]` of `{path, name, fsId, size, isDir, md5?, ctime, mtime}`; `bnd meta --json <path…>`; `bnd tree --json [--depth n] <dir>` → nested `root.children`; `bnd search --json -r --path <dir> <keyword>`.
-3. Act: `bnd download --json -o <local dir> <path…>`, `bnd upload --json <local…> <netdisk dir>`, `bnd mkdir`, `bnd rm`, `bnd cp`, `bnd mv`, `bnd share create`, `bnd share save`.
+1. `bdc who --json`. If `loggedIn` is false, log in: `bdc login --cookies "BDUSS=…; STOKEN=…"` (or `--from-chrome` / `--from-edge`).
+2. Inspect: `bdc ls --json <dir>` → `files[]` of `{path, name, fsId, size, isDir, md5?, ctime, mtime}`; `bdc meta --json <path…>`; `bdc tree --json [--depth n] <dir>` → nested `root.children`; `bdc search --json -r --path <dir> <keyword>`.
+3. Act: `bdc download --json -o <local dir> <path…>`, `bdc upload --json <local…> <netdisk dir>`, `bdc mkdir`, `bdc rm`, `bdc cp`, `bdc mv`, `bdc share create`, `bdc share save`.
 4. Read stdout: check `ok`, then the command's fields. For downloads take each file's absolute local path from `files[].file`; never build it yourself.
 
 ## Output
@@ -21,26 +21,26 @@
 |---|---|---|---|
 | 0 | – | done | read the fields |
 | 1 | failed | server, network or transfer failure | retry later |
-| 2 | input | not found, already exists, no wildcard match, wrong extraction code, bad value | fix the input; `bnd ls --json` to look around |
+| 2 | input | not found, already exists, no wildcard match, wrong extraction code, bad value | fix the input; `bdc ls --json` to look around |
 | 3 | dependency | browser cookies unreadable (permissions) | log in with `--cookies` |
-| 4 | auth | not logged in or login expired; with `code` 132, Baidu wants a security check instead | `bnd login` again; for 132 logging in does not help: stop and ask the user to verify on the web or phone |
-| 64 | usage | bad command line, or a confirmation needed without a terminal | see `bnd <command> --help`; add `-y` |
+| 4 | auth | not logged in or login expired; with `code` 132, Baidu wants a security check instead | `bdc login` again; for 132 logging in does not help: stop and ask the user to verify on the web or phone |
+| 64 | usage | bad command line, or a confirmation needed without a terminal | see `bdc <command> --help`; add `-y` |
 | 130 | cancelled | interrupted | rerun; transfers resume |
 
 ## Rules
 
-- Netdisk paths are absolute (`/Photos/a.jpg`) or relative to the working directory set by `bnd cd` (`bnd pwd --json`). Quote them: they contain spaces, Chinese and wildcards.
-- Wildcards `*`, `?`, `[…]` work in any path component and are expanded by bnd against what exists; a pattern with no match is an `input` error. A name that exists exactly as written always means itself (`"[1].txt"` is that file), and `\` escapes a wildcard character.
+- Netdisk paths are absolute (`/Photos/a.jpg`) or relative to the working directory set by `bdc cd` (`bdc pwd --json`). Quote them: they contain spaces, Chinese and wildcards.
+- Wildcards `*`, `?`, `[…]` work in any path component and are expanded by bdc against what exists; a pattern with no match is an `input` error. A name that exists exactly as written always means itself (`"[1].txt"` is that file), and `\` escapes a wildcard character.
 - `md5` is present only when it is the file's real content md5. Baidu does not know it for files stored in several blocks (typically those uploaded in 4 MiB pieces), so those have no `md5`.
 - `mkdir` of a directory that already exists succeeds (`existing[]`), so it is safe to repeat.
 - `cp`/`mv <src…> <dst>`: if `dst` is an existing directory, sources go into it; otherwise one source is copied/renamed to `dst`, several go into a new directory `dst`. `items[]` lists each `{from, to}`.
-- `rm` moves to the recycle bin: `bnd recycle list --json` (`files[].fsId`, `daysLeft`), `bnd recycle restore <fsId…>`, `bnd recycle delete -y <fsId…>` (permanent).
-- Downloads: `-o <dir>` (default: the `save-dir` setting). A directory downloads recursively into `<dir>/<its name>/…`; `--full-path` keeps the whole netdisk path. A file already on disk is `{"status": "skipped", "reason": "exists"}`; `--overwrite` replaces it. Interrupted downloads resume (a `.bnd-part` file sits beside the target meanwhile).
+- `rm` moves to the recycle bin: `bdc recycle list --json` (`files[].fsId`, `daysLeft`), `bdc recycle restore <fsId…>`, `bdc recycle delete -y <fsId…>` (permanent).
+- Downloads: `-o <dir>` (default: the `save-dir` setting). A directory downloads recursively into `<dir>/<its name>/…`; `--full-path` keeps the whole netdisk path. A file already on disk is `{"status": "skipped", "reason": "exists"}`; `--overwrite` replaces it. Interrupted downloads resume (a `.bdc-part` file sits beside the target meanwhile).
 - Uploads: the last argument is the netdisk directory; the others are local files or directories (uploaded recursively as `<dir>/<name>/…`). If the target exists: `--policy skip` (default) → `skipped`/`exists`; `overwrite` replaces; `rsync` replaces unless the size is the same (`skipped`/`same-size`). `status: "rapid"` means Baidu already had the content and nothing was sent. Interrupted uploads resume.
 - `files[].status` in transfers: `downloaded`, `uploaded`, `rapid`, `skipped` (`reason`: `exists`, `same-size`, `symlink` for a symlinked local directory, which is not followed), `failed` (with `error`); `summary` counts them. A path that cannot be read, or two files that would land on the same target, fail on their own while the rest still transfers. If any file failed the command fails, but the document lists every file.
-- Shares: `bnd share create --json [-p <4 chars>] [--days n, 0 = forever] <path…>` → `shareId`, `link`, `pwd`, `url` (link with `?pwd=`). `bnd share save --json "<link>" [<code>] [--to <dir>]` saves someone else's share into the working directory (or `--to`); the code may be in the link. Saving your own share fails (Baidu: 文件已存在, code 2). `bnd share cancel <shareId…>`.
-- Offline downloads run on Baidu's servers: `bnd offline add --json --to <dir> <url…>` → `ids`; poll `bnd offline list --json <id…>` (`status` 0 = done, 1 = running).
-- `logout`, `recycle delete`, `recycle clear` and `update` need `-y` without a terminal. With no command and no terminal, bnd exits 64 instead of opening the shell.
+- Shares: `bdc share create --json [-p <4 chars>] [--days n, 0 = forever] <path…>` → `shareId`, `link`, `pwd`, `url` (link with `?pwd=`). `bdc share save --json "<link>" [<code>] [--to <dir>]` saves someone else's share into the working directory (or `--to`); the code may be in the link. Saving your own share fails (Baidu: 文件已存在, code 2). `bdc share cancel <shareId…>`.
+- Offline downloads run on Baidu's servers: `bdc offline add --json --to <dir> <url…>` → `ids`; poll `bdc offline list --json <id…>` (`status` 0 = done, 1 = running).
+- `logout`, `recycle delete`, `recycle clear` and `update` need `-y` without a terminal. With no command and no terminal, bdc exits 64 instead of opening the shell.
 
 ## Command map
 
@@ -53,4 +53,4 @@ Share     share create|list|cancel|save
 Other     config [set …|reset] · update [--check] [-y]
 ```
 
-Settings and accounts: `config.json` in the user config directory (`bnd config --json` shows the path and the settings, never the cookies), or `$BND_CONFIG_DIR`.
+Settings and accounts: `config.json` in the user config directory (`bdc config --json` shows the path and the settings, never the cookies), or `$BDC_CONFIG_DIR`.

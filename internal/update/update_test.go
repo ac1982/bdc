@@ -28,8 +28,8 @@ func TestNewer(t *testing.T) {
 }
 
 func TestHasChecksum(t *testing.T) {
-	sums := "abc  bnd-v1-linux-amd64.tar.gz\ndef *bnd-v1-darwin-arm64.tar.gz\n"
-	if !hasChecksum(sums, "def", "bnd-v1-darwin-arm64.tar.gz") || hasChecksum(sums, "abc", "bnd-v1-darwin-arm64.tar.gz") {
+	sums := "abc  bdc-v1-linux-amd64.tar.gz\ndef *bdc-v1-darwin-arm64.tar.gz\n"
+	if !hasChecksum(sums, "def", "bdc-v1-darwin-arm64.tar.gz") || hasChecksum(sums, "abc", "bdc-v1-darwin-arm64.tar.gz") {
 		t.Fatal("wrong match")
 	}
 }
@@ -42,7 +42,7 @@ func TestExtractAndReplace(t *testing.T) {
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
 	body := []byte("new binary")
-	tw.WriteHeader(&tar.Header{Name: "bnd-v1/bnd", Mode: 0o755, Size: int64(len(body)), Typeflag: tar.TypeReg})
+	tw.WriteHeader(&tar.Header{Name: "bdc-v1/bdc", Mode: 0o755, Size: int64(len(body)), Typeflag: tar.TypeReg})
 	tw.Write(body)
 	tw.Close()
 	gz.Close()
@@ -50,7 +50,7 @@ func TestExtractAndReplace(t *testing.T) {
 	if err != nil || string(bin) != "new binary" {
 		t.Fatal(string(bin), err)
 	}
-	exe := filepath.Join(t.TempDir(), "bnd")
+	exe := filepath.Join(t.TempDir(), "bdc")
 	os.WriteFile(exe, []byte("old"), 0o755)
 	if err := replace(exe, bin); err != nil {
 		t.Fatal(err)

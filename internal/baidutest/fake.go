@@ -1,5 +1,5 @@
 // Package baidutest is an in-memory Baidu Netdisk that speaks the endpoints
-// bnd uses, for tests that must run anywhere (CI has no account and no
+// bdc uses, for tests that must run anywhere (CI has no account and no
 // recordings). Where it models something, it does so the way the real
 // service was observed to behave (docs/baidu-api.md): paths ignore case,
 // listings are paged, long URLs are refused, a bad login is errno -6, a

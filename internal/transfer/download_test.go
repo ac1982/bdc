@@ -171,7 +171,7 @@ func TestDownloadRejectsWrongRange(t *testing.T) {
 	}
 }
 
-// Files bnd did not create are never overwritten, whatever their names.
+// Files bdc did not create are never overwritten, whatever their names.
 func TestDownloadLeavesOthersFilesAlone(t *testing.T) {
 	srv := serve(t, []byte("new content"))
 	for name, setup := range map[string]func(dest string) string{
@@ -277,7 +277,7 @@ func TestDownloadRejectsLongBody(t *testing.T) {
 	}
 }
 
-// A download whose final rename fails can be retried: its part stays bnd's.
+// A download whose final rename fails can be retried: its part stays bdc's.
 func TestDownloadRetriesFailedInstall(t *testing.T) {
 	srv := serve(t, []byte("abc"))
 	dest := filepath.Join(t.TempDir(), "f")

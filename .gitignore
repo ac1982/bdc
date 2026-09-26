@@ -1,4 +1,4 @@
-/bnd
+/bdc
 /dist/
 e2e/testdata/
-*.bnd-part
+*.bdc-part

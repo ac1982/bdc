@@ -53,7 +53,7 @@ func (ta *testApp) json(t *testing.T, args ...string) (int, map[string]any) {
 	code := ta.run(append(args, "--json")...)
 	var doc map[string]any
 	if err := json.Unmarshal(ta.stdout.Bytes(), &doc); err != nil {
-		t.Fatalf("bnd %s: stdout is not one JSON document: %v\n%s", strings.Join(args, " "), err, ta.stdout.String())
+		t.Fatalf("bdc %s: stdout is not one JSON document: %v\n%s", strings.Join(args, " "), err, ta.stdout.String())
 	}
 	return code, doc
 }
@@ -280,23 +280,23 @@ func TestCaseInsensitiveTargets(t *testing.T) {
 
 func TestDownloadNeverTouchesOthersFiles(t *testing.T) {
 	ta := newTestApp(t)
-	ta.fake.Put("/d/x.bnd-part", []byte("a real file"), 1)
+	ta.fake.Put("/d/x.bdc-part", []byte("a real file"), 1)
 	ta.fake.Put("/d/x", []byte("x"), 1)
 	dl := t.TempDir()
-	code, doc := ta.json(t, "download", "-o", dl, "/d/x.bnd-part", "/d/x")
+	code, doc := ta.json(t, "download", "-o", dl, "/d/x.bdc-part", "/d/x")
 	if code != 2 || doc["summary"].(map[string]any)["downloaded"] != 1.0 {
 		t.Errorf("%d %v", code, doc)
 	}
-	if got, _ := os.ReadFile(filepath.Join(dl, "x.bnd-part")); string(got) != "a real file" {
-		t.Errorf("the downloaded x.bnd-part was clobbered: %q", got)
+	if got, _ := os.ReadFile(filepath.Join(dl, "x.bdc-part")); string(got) != "a real file" {
+		t.Errorf("the downloaded x.bdc-part was clobbered: %q", got)
 	}
-	// A leftover file bnd did not create is not taken for a part file.
+	// A leftover file bdc did not create is not taken for a part file.
 	dl2 := t.TempDir()
-	os.WriteFile(filepath.Join(dl2, "x.bnd-part"), []byte("mine"), 0o644)
+	os.WriteFile(filepath.Join(dl2, "x.bdc-part"), []byte("mine"), 0o644)
 	if code, _ := ta.json(t, "download", "-o", dl2, "/d/x"); code != 2 {
 		t.Errorf("download next to a foreign part file: %d", code)
 	}
-	if got, _ := os.ReadFile(filepath.Join(dl2, "x.bnd-part")); string(got) != "mine" {
+	if got, _ := os.ReadFile(filepath.Join(dl2, "x.bdc-part")); string(got) != "mine" {
 		t.Errorf("foreign part file changed: %q", got)
 	}
 }
@@ -366,7 +366,7 @@ func TestCaseOnlyRenameHalfDone(t *testing.T) {
 	}
 	code, doc := ta.json(t, "mv", "/a.txt", "/A.txt")
 	items, _ := doc["items"].([]any)
-	if code != 4 || len(items) != 1 || items[0].(map[string]any)["to"] != "/A.txt.bnd-rename" {
+	if code != 4 || len(items) != 1 || items[0].(map[string]any)["to"] != "/A.txt.bdc-rename" {
 		t.Errorf("%d %v", code, doc)
 	}
 }

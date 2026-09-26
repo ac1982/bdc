@@ -22,7 +22,7 @@ import (
 )
 
 // PartSuffix marks a download in progress; its resume record is PartSuffix+".json".
-const PartSuffix = ".bnd-part"
+const PartSuffix = ".bdc-part"
 
 const chunkSize = 4 << 20
 
@@ -48,7 +48,7 @@ type Download struct {
 }
 
 // record is the resume state saved beside the part file. Owner marks it as
-// bnd's, so a user's file that happens to have the same name is never taken
+// bdc's, so a user's file that happens to have the same name is never taken
 // for a download in progress.
 type record struct {
 	Owner string `json:"owner"`
@@ -57,10 +57,10 @@ type record struct {
 	Done  []bool `json:"done"` // per chunk
 }
 
-const recordOwner = "bnd download"
+const recordOwner = "bdc download"
 
-// ErrOccupied means a file bnd did not create sits where the download keeps
-// its part file or resume record; bnd will not overwrite it.
+// ErrOccupied means a file bdc did not create sits where the download keeps
+// its part file or resume record; bdc will not overwrite it.
 var ErrOccupied = errors.New("文件已被占用")
 
 // Run downloads into Dest+PartSuffix and renames it to Dest when complete.
@@ -286,8 +286,8 @@ func (d *Download) chunkLen(i int) int64 {
 	return min(chunkSize, d.Size-int64(i)*chunkSize)
 }
 
-// open returns the part file and its record: bnd's own intact part of this
-// version of the file to resume, or else a new one. Files bnd did not create
+// open returns the part file and its record: bdc's own intact part of this
+// version of the file to resume, or else a new one. Files bdc did not create
 // are never overwritten.
 func (d *Download) open(part, recPath string) (*os.File, *record, error) {
 	var rec record
@@ -303,10 +303,10 @@ func (d *Download) open(part, recPath string) (*os.File, *record, error) {
 		if partErr == nil {
 			occupied = part
 		}
-		return nil, nil, fmt.Errorf("%w: %s 不是 bnd 的下载记录, 请移走或删除它", ErrOccupied, occupied)
+		return nil, nil, fmt.Errorf("%w: %s 不是 bdc 的下载记录, 请移走或删除它", ErrOccupied, occupied)
 	}
 	// Start over. The record is written before the part is created, so a part
-	// without bnd's record is never bnd's.
+	// without bdc's record is never bdc's.
 	if ours {
 		os.Remove(part)
 	}
@@ -365,7 +365,7 @@ func saveJSON(path string, v any) error {
 		return err
 	}
 	// A unique temporary name: a fixed one could be someone else's file.
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".bnd-*.tmp")
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".bdc-*.tmp")
 	if err != nil {
 		return err
 	}

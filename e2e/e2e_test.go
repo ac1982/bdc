@@ -1,12 +1,12 @@
-// Package e2e runs the bnd binary through scenarios and compares its stdout,
+// Package e2e runs the bdc binary through scenarios and compares its stdout,
 // stderr and exit code with a recorded run.
 //
 //	go test ./e2e                  replay offline (the default)
-//	go test ./e2e -record          record with a real account, only under /bnd-test
+//	go test ./e2e -record          record with a real account, only under /bdc-test
 //	go test ./e2e -update          replay, and accept the new output as correct
 //
-// Recording reads the login from BND_TEST_COOKIES, or else from the current
-// account of your own bnd config. Recordings contain account details, so
+// Recording reads the login from BDC_TEST_COOKIES, or else from the current
+// account of your own bdc config. Recordings contain account details, so
 // e2e/testdata is not committed; without it the scenarios are skipped.
 package e2e
 
@@ -39,11 +39,11 @@ var binary string
 
 func TestMain(m *testing.M) {
 	flag.Parse()
-	dir, err := os.MkdirTemp("", "bnd-e2e-")
+	dir, err := os.MkdirTemp("", "bdc-e2e-")
 	if err != nil {
 		panic(err)
 	}
-	binary = filepath.Join(dir, "bnd")
+	binary = filepath.Join(dir, "bdc")
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
@@ -100,11 +100,11 @@ func TestScenarios(t *testing.T) {
 }
 
 // root is the scenario's own netdisk directory, new for every recording so
-// that recording never touches anything else under /bnd-test.
+// that recording never touches anything else under /bdc-test.
 func root(t *testing.T, dir, name string) string {
 	file := filepath.Join(dir, "root")
 	if *record {
-		r := fmt.Sprintf("/bnd-test/e2e-%s-%d", name, time.Now().Unix())
+		r := fmt.Sprintf("/bdc-test/e2e-%s-%d", name, time.Now().Unix())
 		os.WriteFile(file, []byte(r), 0o644)
 		return r
 	}
@@ -143,9 +143,9 @@ func run(t *testing.T, sc scenario, dir, cookies, root string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		cmd := exec.CommandContext(ctx, binary, args...)
 		cmd.Dir = work
-		cmd.Env = append(os.Environ(), config.EnvDir+"="+cfg, "BND_CASSETTE="+cassette)
+		cmd.Env = append(os.Environ(), config.EnvDir+"="+cfg, "BDC_CASSETTE="+cassette)
 		if *record {
-			cmd.Env = append(cmd.Env, "BND_RECORD=1")
+			cmd.Env = append(cmd.Env, "BDC_RECORD=1")
 		}
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -173,7 +173,7 @@ func run(t *testing.T, sc scenario, dir, cookies, root string) {
 				t.Errorf("%s: %v", base, err)
 			}
 		}
-		got := fmt.Sprintf("$ bnd %s\n[exit %d]\n--- stdout\n%s--- stderr\n%s",
+		got := fmt.Sprintf("$ bdc %s\n[exit %d]\n--- stdout\n%s--- stderr\n%s",
 			strings.Join(st.args, " "), code, normalize(stdout.String(), tmp, root, st.sorted), normalize(stderr.String(), tmp, root, st.sorted))
 		golden := base + ".golden"
 		if *record || *update {
@@ -219,12 +219,12 @@ func normalize(s, tmp, root string, sorted bool) string {
 }
 
 func recordCookies(t *testing.T) string {
-	if c := os.Getenv("BND_TEST_COOKIES"); c != "" {
+	if c := os.Getenv("BDC_TEST_COOKIES"); c != "" {
 		return c
 	}
 	cfg, err := config.Load()
 	if err != nil || cfg.Current() == nil {
-		t.Fatal("recording needs a login: set BND_TEST_COOKIES or log in with bnd login")
+		t.Fatal("recording needs a login: set BDC_TEST_COOKIES or log in with bdc login")
 	}
 	return cfg.Current().Cookies
 }

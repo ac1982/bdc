@@ -32,7 +32,7 @@ func (a *App) shell() int {
 		return a.report("", nil, err)
 	}
 	defer rl.Close()
-	fmt.Fprintln(a.stderr, "bnd", Version, "交互模式. 输入 help 查看命令, exit 退出. Tab 补全命令和网盘路径.")
+	fmt.Fprintln(a.stderr, "bdc", Version, "交互模式. 输入 help 查看命令, exit 退出. Tab 补全命令和网盘路径.")
 	for {
 		line, err := rl.Readline()
 		if errors.Is(err, readline.ErrInterrupt) {
@@ -61,9 +61,9 @@ func (a *App) shell() int {
 
 func (a *App) prompt() string {
 	if acc := a.cfg.Current(); acc != nil {
-		return fmt.Sprintf("bnd:%s %s$ ", acc.Workdir, acc.Name)
+		return fmt.Sprintf("bdc:%s %s$ ", acc.Workdir, acc.Name)
 	}
-	return "bnd (未登录)$ "
+	return "bdc (未登录)$ "
 }
 
 // commandNames lists the top-level commands of the grammar.

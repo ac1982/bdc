@@ -1,8 +1,8 @@
-# Archives are named bnd-<tag>-<os>-<arch>; `bnd update` looks for exactly that.
+# Archives are named bdc-<tag>-<os>-<arch>; `bdc update` looks for exactly that.
 version: 2
 
 builds:
-  - binary: bnd
+  - binary: bdc
     env: [CGO_ENABLED=0]
     goos: [darwin, linux, windows]
     goarch: [amd64, arm64]
@@ -10,7 +10,7 @@ builds:
     ldflags: ["-s -w -X github.com/ac1982/baidunetdisk-cli/internal/cli.Version={{ .Tag }}"]
 
 archives:
-  - name_template: "bnd-{{ .Tag }}-{{ .Os }}-{{ .Arch }}"
+  - name_template: "bdc-{{ .Tag }}-{{ .Os }}-{{ .Arch }}"
     formats: [tar.gz]
     format_overrides:
       - goos: windows

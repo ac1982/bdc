@@ -1,4 +1,4 @@
-# Baidu Netdisk HTTP protocol spec (for the clean-room rewrite of `bnd`)
+# Baidu Netdisk HTTP protocol spec (for the clean-room rewrite of `bdc`)
 
 Status: research notes, 2026-09-26, from real HTTP recordings.
 
@@ -12,9 +12,9 @@ Tags used below:
 > `locatedownload`, where the old code puts the signature params last on purpose (§5.1). Values marked `REDACTED` are
 > credentials (Cookie, BDUSS, bdstoken in requests).
 
-> **Which family bnd uses (2026-09-26, verified live).** PCS endpoints do not report a bad login: with an invalid
+> **Which family bdc uses (2026-09-26, verified live).** PCS endpoints do not report a bad login: with an invalid
 > BDUSS, `file?method=meta` answers 31066 "not found" and `quota` answers with zeros. The pan endpoints answer
-> `errno -6`. bnd therefore uses the pan family for everything except the upload data path (`locateupload`,
+> `errno -6`. bdc therefore uses the pan family for everything except the upload data path (`locateupload`,
 > `superfile2`) and download links (`locatedownload`):
 >
 > | need | endpoint | notes |
@@ -236,7 +236,7 @@ Response `{"quota":21009906270208,"used":6364689840571}` (bytes). free = quota �
 
 ### 3.5 mkdir, delete, copy, move (PCS) [rec]
 - **mkdir**: `POST .../pcs/file?app_id=266719&method=mkdir&path=<p>` with no body. Parents are created implicitly
-  (`/bnd-test/x/y` in one call) [rec]. Success:
+  (`/bdc-test/x/y` in one call) [rec]. Success:
   `{"ctime","fs_id","isdir":1,"mtime","path","status":0}`. Already exists: **HTTP 400**
   `{"error_code":31061,"error_msg":"file already exists"}` [rec].
 - **delete** (to the recycle bin): `POST ...method=delete`, param `{"list":[{"path":...},...]}` → `{"request_id":...}`.
@@ -310,7 +310,7 @@ The old code also applies: `if len(block_list)==1: md5 = block_list[0]` (then de
 7. POST https://<host>/rest/2.0/pcs/superfile2?...   (one per block, parallel, any order)
 8. POST /api/create                          -> file created
 ```
-Parent directories are created implicitly by precreate/create (`/bnd-test/dir/sub/b.txt` was uploaded without a
+Parent directories are created implicitly by precreate/create (`/bdc-test/dir/sub/b.txt` was uploaded without a
 mkdir) [rec].
 
 ### 4.3 precreate, rapid attempt (the "RapidUpload" form) [rec]
@@ -539,7 +539,7 @@ post-verify locals (`bdstoken`, `shareid`, `share_uk`).
 ### 8.4 Step 4: list the share root
 `GET https://pan.baidu.com/share/list?bdstoken=<t>&root=1&web=5&app_id=250528&shorturl=<shorturl>&channel=chunlei`
 - Headers: BROWSER_UA, `Content-Type: application/x-www-form-urlencoded; charset=UTF-8`, cookies (with BDCLND).
-- Response [rec]: `{"errno":0,"title":"/bnd-test/shared","list":[{"fs_id":"966229782204241","isdir":"1","path":"/bnd-test/shared","server_filename":"shared","size":"0","md5":"",…}],"cur_total":1,"share_id":17666619262,"uk":<uk>,"expired_type":1,"show_msg":"success"}`.
+- Response [rec]: `{"errno":0,"title":"/bdc-test/shared","list":[{"fs_id":"966229782204241","isdir":"1","path":"/bdc-test/shared","server_filename":"shared","size":"0","md5":"",…}],"cur_total":1,"share_id":17666619262,"uk":<uk>,"expired_type":1,"show_msg":"success"}`.
   **Numbers are strings** in `list[]`.
 - The old code uses only the root items: `fs_id` for all of them and `server_filename` of the first. It does no
   pagination and no sub-dir listing. errno 8001 → `已触发验证, 请稍后再试`.
@@ -555,7 +555,7 @@ post-verify locals (`bdstoken`, `shareid`, `share_uk`).
   `basename(info[0].path)`, plus `等多个文件/文件夹` if there is more than one.
 - Errors:
   - **errno 2, `show_msg:"文件已存在"`**, returned when transferring **your own share** even into an empty dir [rec: dest
-    `/bnd-test/in` was empty]. The old CLI prints `分享链接转存到网盘失败: 文件已存在 (错误码 2)` with exit 1.
+    `/bdc-test/in` was empty]. The old CLI prints `分享链接转存到网盘失败: 文件已存在 (错误码 2)` with exit 1.
   - errno 4 → `文件重复`.
   - errno 12 → look at `target_file_nums` vs `target_file_nums_limit` (too many files:
     `转存文件数%d超过当前用户上限, 当前用户单次最大转存数%d`), or `info[0].errno == -30` (a same-name item exists in
@@ -590,7 +590,7 @@ Status: 0 下载成功, 1 下载进行中, 2 系统错误, 3 资源不存在, 4 
   → CDN GET with UA netdisk and `Range: bytes=0-262143` → read `Content-MD5`, `Content-Disposition` filename,
   `Content-Range` total and `x-bs-meta-crc32` (missing or "0" → error), and md5 the first 256 KiB for `slice-md5`. If
   `Content-MD5` is missing and size < 4 GB, retry with the PCS download URL.
-- **export**: prints `bnd rapidupload -length=… -md5=… -slicemd5=… -crc32=… "<path>"` lines, or
+- **export**: prints `bdc rapidupload -length=… -md5=… -slicemd5=… -crc32=… "<path>"` lines, or
   `md5#slicemd5#size#name` links. **No `rapidupload` command exists any more**, so this output is unusable (help text
   says 秒传已经失效).
 - **fixmd5**: rapid-create over the existing file with the true md5:
@@ -712,7 +712,7 @@ wrong-password / gone / 404 errors; everything else = failed.
 | `transfer --rname` | none | **obsolete** (no-op, "秒传已不再被支持") |
 | `offlinedl add/query/list/cancel/delete[-all]` | cloud_dl add/query/list/cancel/delete/clear | unverified |
 | `recycle list/restore/delete[-all]` | /api/recycle/list, pcs restore, /api/recycle/delete, pcs delete type=recycle | unverified |
-| `export` | list/meta + locatedownload + CDN range GET (rapid info) | **obsolete**: emits `bnd rapidupload …` commands that no longer exist |
+| `export` | list/meta + locatedownload + CDN range GET (rapid info) | **obsolete**: emits `bdc rapidupload …` commands that no longer exist |
 | `sumfile` | none (local md5 / slice-md5 / crc32) | local-only; help says 目前秒传功能已失效 |
 | `fixmd5` (mentioned in `upload` help) | xpan/file create with access_token | **dead**: not registered as a command |
 | `config`, `env`, `run`, `clear`, `quit`, `tool enc/dec/showtime` | none | local |

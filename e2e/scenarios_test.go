@@ -2,12 +2,12 @@ package e2e
 
 var login = step{name: "login", args: []string{"login", "--cookies", "$COOKIES"}}
 
-// Every scenario works in its own directory $ROOT under /bnd-test.
+// Every scenario works in its own directory $ROOT under /bdc-test.
 var scenarios = []scenario{
 	{
 		name: "files",
 		files: map[string][]byte{
-			"up/hello.txt":     []byte("hello, bnd\n"),
+			"up/hello.txt":     []byte("hello, bdc\n"),
 			"up/empty.txt":     nil,
 			"up/[1].txt":       []byte("bracket\n"),
 			"up/1.txt":         []byte("one\n"),

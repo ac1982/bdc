@@ -1,4 +1,4 @@
-// Command bnd is a command-line client for Baidu Netdisk.
+// Command bdc is a command-line client for Baidu Netdisk.
 package main
 
 import (

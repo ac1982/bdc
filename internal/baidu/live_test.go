@@ -10,11 +10,11 @@ import (
 )
 
 // Live tests talk to Baidu with a real account. They run only when
-// BND_LIVE_COOKIES holds the cookies, and only touch /bnd-test.
+// BDC_LIVE_COOKIES holds the cookies, and only touch /bdc-test.
 func liveClient(t *testing.T) *Client {
-	cookies := os.Getenv("BND_LIVE_COOKIES")
+	cookies := os.Getenv("BDC_LIVE_COOKIES")
 	if cookies == "" {
-		t.Skip("set BND_LIVE_COOKIES to run live tests")
+		t.Skip("set BDC_LIVE_COOKIES to run live tests")
 	}
 	c, err := New(nil, cookies, 0)
 	if err != nil {
@@ -40,10 +40,10 @@ func TestLiveReadOnly(t *testing.T) {
 	if fs, err := c.List(ctx, "/"); err != nil || len(fs) == 0 {
 		t.Errorf("List: %d %v", len(fs), err)
 	}
-	if _, err := c.List(ctx, "/bnd-test-definitely-missing"); Code(err) != -9 {
+	if _, err := c.List(ctx, "/bdc-test-definitely-missing"); Code(err) != -9 {
 		t.Errorf("List missing: %v", err)
 	}
-	if _, err := c.Meta(ctx, "/bnd-test-definitely-missing"); !errors.Is(err, ErrNotFound) {
+	if _, err := c.Meta(ctx, "/bdc-test-definitely-missing"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Meta missing: %v", err)
 	}
 	r, err := c.Recycled(ctx)
@@ -59,7 +59,7 @@ func TestLiveReadOnly(t *testing.T) {
 	if _, err := bad.Meta(ctx, "/"); !errors.Is(err, ErrAuth) {
 		t.Errorf("meta with a bad login: %v", err)
 	}
-	if strings.Contains(os.Getenv("BND_LIVE"), "verbose") {
+	if strings.Contains(os.Getenv("BDC_LIVE"), "verbose") {
 		for _, x := range s {
 			t.Logf("  share %d %s %v", x.ID, x.Link, x.Paths)
 		}

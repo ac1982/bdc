@@ -1,9 +1,9 @@
-=== bnd --help
-Usage: bnd <command> [flags]
+=== bdc --help
+Usage: bdc <command> [flags]
 
 百度网盘命令行客户端, 为人和 AI agent 而生.
 
-    网盘路径是绝对路径, 或相对于 cd 设定的工作目录; 通配符 * ? [ ] 由 bnd 展开.
+    网盘路径是绝对路径, 或相对于 cd 设定的工作目录; 通配符 * ? [ ] 由 bdc 展开.
     --json: stdout 只有一份 JSON 文档 (含 ok, command, 失败时 error), 进度和日志在 stderr.
     退出码: 0 成功, 1 服务器/网络/传输失败, 2 输入有误 (不存在, 已存在, 无匹配, 提取码错误),
             3 缺少依赖或权限, 4 未登录或登录过期, 64 命令行有误或需要终端, 130 已取消.
@@ -61,8 +61,8 @@ Flags:
   config reset    恢复默认设置
   update          检查并安装新版本
 
-=== bnd login --help
-Usage: bnd login [flags]
+=== bdc login --help
+Usage: bdc login [flags]
 
 登录百度帐号
 
@@ -78,8 +78,8 @@ Flags:
       --from-edge            读取 Edge 中的登录
       --profile="Default"    浏览器的用户配置, 如 "Profile 1"
 
-=== bnd logout --help
-Usage: bnd logout [flags]
+=== bdc logout --help
+Usage: bdc logout [flags]
 
 退出当前帐号
 
@@ -90,8 +90,8 @@ Flags:
 
   -y, --yes        不再确认
 
-=== bnd who --help
-Usage: bnd who [flags]
+=== bdc who --help
+Usage: bdc who [flags]
 
 显示当前帐号
 
@@ -100,8 +100,8 @@ Flags:
   -h, --help       显示帮助
   -v, --version    显示版本
 
-=== bnd users --help
-Usage: bnd users [flags]
+=== bdc users --help
+Usage: bdc users [flags]
 
 列出已登录的帐号
 
@@ -110,8 +110,8 @@ Flags:
   -h, --help       显示帮助
   -v, --version    显示版本
 
-=== bnd su --help
-Usage: bnd su <user> [flags]
+=== bdc su --help
+Usage: bdc su <user> [flags]
 
 切换帐号
 
@@ -123,8 +123,8 @@ Flags:
   -h, --help       显示帮助
   -v, --version    显示版本
 
-=== bnd quota --help
-Usage: bnd quota [flags]
+=== bdc quota --help
+Usage: bdc quota [flags]
 
 显示网盘容量
 
@@ -133,8 +133,8 @@ Flags:
   -h, --help       显示帮助
   -v, --version    显示版本
 
-=== bnd ls --help
-Usage: bnd ls (ll) [<paths> ...] [flags]
+=== bdc ls --help
+Usage: bdc ls (ll) [<paths> ...] [flags]
 
 列出目录
 
@@ -150,8 +150,8 @@ Flags:
       --sort="name"    排序: name, size, time
       --desc           倒序
 
-=== bnd tree --help
-Usage: bnd tree [<path>] [flags]
+=== bdc tree --help
+Usage: bdc tree [<path>] [flags]
 
 以树形列出目录
 
@@ -165,8 +165,8 @@ Flags:
 
       --depth=0    最大深度, 0 为不限
 
-=== bnd meta --help
-Usage: bnd meta <paths> ... [flags]
+=== bdc meta --help
+Usage: bdc meta <paths> ... [flags]
 
 显示文件或目录的详细信息
 
@@ -178,8 +178,8 @@ Flags:
   -h, --help       显示帮助
   -v, --version    显示版本
 
-=== bnd search --help
-Usage: bnd search <keyword> [flags]
+=== bdc search --help
+Usage: bdc search <keyword> [flags]
 
 按文件名搜索
 
@@ -194,8 +194,8 @@ Flags:
       --path="."     在此目录中搜索
   -r, --recursive    包括子目录
 
-=== bnd cd --help
-Usage: bnd cd [<dir>] [flags]
+=== bdc cd --help
+Usage: bdc cd [<dir>] [flags]
 
 切换工作目录
 
@@ -207,8 +207,8 @@ Flags:
   -h, --help       显示帮助
   -v, --version    显示版本
 
-=== bnd pwd --help
-Usage: bnd pwd [flags]
+=== bdc pwd --help
+Usage: bdc pwd [flags]
 
 显示工作目录
 
@@ -217,8 +217,8 @@ Flags:
   -h, --help       显示帮助
   -v, --version    显示版本
 
-=== bnd mkdir --help
-Usage: bnd mkdir <dirs> ... [flags]
+=== bdc mkdir --help
+Usage: bdc mkdir <dirs> ... [flags]
 
 创建目录
 
@@ -230,8 +230,8 @@ Flags:
   -h, --help       显示帮助
   -v, --version    显示版本
 
-=== bnd rm --help
-Usage: bnd rm <paths> ... [flags]
+=== bdc rm --help
+Usage: bdc rm <paths> ... [flags]
 
 删除文件或目录 (进入回收站)
 
@@ -243,8 +243,8 @@ Flags:
   -h, --help       显示帮助
   -v, --version    显示版本
 
-=== bnd cp --help
-Usage: bnd cp <paths> ... [flags]
+=== bdc cp --help
+Usage: bdc cp <paths> ... [flags]
 
 复制文件或目录
 
@@ -256,8 +256,8 @@ Flags:
   -h, --help       显示帮助
   -v, --version    显示版本
 
-=== bnd mv --help
-Usage: bnd mv <paths> ... [flags]
+=== bdc mv --help
+Usage: bdc mv <paths> ... [flags]
 
 移动或重命名文件或目录
 
@@ -269,8 +269,8 @@ Flags:
   -h, --help       显示帮助
   -v, --version    显示版本
 
-=== bnd recycle list --help
-Usage: bnd recycle list
+=== bdc recycle list --help
+Usage: bdc recycle list
 
 列出回收站
 
@@ -279,8 +279,8 @@ Flags:
   -h, --help       显示帮助
   -v, --version    显示版本
 
-=== bnd recycle restore --help
-Usage: bnd recycle restore <fs_id> ...
+=== bdc recycle restore --help
+Usage: bdc recycle restore <fs_id> ...
 
 还原文件
 
@@ -292,8 +292,8 @@ Flags:
   -h, --help       显示帮助
   -v, --version    显示版本
 
-=== bnd recycle delete --help
-Usage: bnd recycle delete <fs_id> ... [flags]
+=== bdc recycle delete --help
+Usage: bdc recycle delete <fs_id> ... [flags]
 
 彻底删除文件
 
@@ -307,8 +307,8 @@ Flags:
 
   -y, --yes        不再确认
 
-=== bnd recycle clear --help
-Usage: bnd recycle clear [flags]
+=== bdc recycle clear --help
+Usage: bdc recycle clear [flags]
 
 清空回收站
 
@@ -319,8 +319,8 @@ Flags:
 
   -y, --yes        不再确认
 
-=== bnd download --help
-Usage: bnd download <paths> ... [flags]
+=== bdc download --help
+Usage: bdc download <paths> ... [flags]
 
 下载文件或目录
 
@@ -337,8 +337,8 @@ Flags:
       --overwrite        覆盖本地已存在的文件, 默认跳过
   -p, --conns=INT        每个文件的连接数, 默认为设置中的 connections
 
-=== bnd upload --help
-Usage: bnd upload <local… dir> ... [flags]
+=== bdc upload --help
+Usage: bdc upload <local… dir> ... [flags]
 
 上传文件或目录
 
@@ -353,8 +353,8 @@ Flags:
       --policy="skip"    目标已存在时: skip 跳过, overwrite 覆盖, rsync 大小相同才跳过
   -p, --conns=INT        每个文件同时上传的分块数, 默认为设置中的 connections
 
-=== bnd offline add --help
-Usage: bnd offline add <url> ... [flags]
+=== bdc offline add --help
+Usage: bdc offline add <url> ... [flags]
 
 添加离线下载任务
 
@@ -368,8 +368,8 @@ Flags:
 
       --to=STRING    保存到此网盘目录, 默认为工作目录
 
-=== bnd offline list --help
-Usage: bnd offline list [<id> ...]
+=== bdc offline list --help
+Usage: bdc offline list [<id> ...]
 
 列出任务
 
@@ -381,8 +381,8 @@ Flags:
   -h, --help       显示帮助
   -v, --version    显示版本
 
-=== bnd offline cancel --help
-Usage: bnd offline cancel <id> ...
+=== bdc offline cancel --help
+Usage: bdc offline cancel <id> ...
 
 取消任务
 
@@ -394,8 +394,8 @@ Flags:
   -h, --help       显示帮助
   -v, --version    显示版本
 
-=== bnd offline delete --help
-Usage: bnd offline delete <id> ...
+=== bdc offline delete --help
+Usage: bdc offline delete <id> ...
 
 删除任务记录
 
@@ -407,8 +407,8 @@ Flags:
   -h, --help       显示帮助
   -v, --version    显示版本
 
-=== bnd offline clear --help
-Usage: bnd offline clear
+=== bdc offline clear --help
+Usage: bdc offline clear
 
 清除已结束的任务记录
 
@@ -417,8 +417,8 @@ Flags:
   -h, --help       显示帮助
   -v, --version    显示版本
 
-=== bnd share create --help
-Usage: bnd share create <paths> ... [flags]
+=== bdc share create --help
+Usage: bdc share create <paths> ... [flags]
 
 创建分享链接
 
@@ -433,8 +433,8 @@ Flags:
   -p, --pwd=STRING    4 位提取码, 默认随机生成
       --days=7        有效天数, 0 为永久
 
-=== bnd share list --help
-Usage: bnd share list
+=== bdc share list --help
+Usage: bdc share list
 
 列出我的分享
 
@@ -443,8 +443,8 @@ Flags:
   -h, --help       显示帮助
   -v, --version    显示版本
 
-=== bnd share cancel --help
-Usage: bnd share cancel <shareId> ...
+=== bdc share cancel --help
+Usage: bdc share cancel <shareId> ...
 
 取消分享
 
@@ -456,8 +456,8 @@ Flags:
   -h, --help       显示帮助
   -v, --version    显示版本
 
-=== bnd share save --help
-Usage: bnd share save <link> [<pwd>] [flags]
+=== bdc share save --help
+Usage: bdc share save <link> [<pwd>] [flags]
 
 把别人的分享转存到我的网盘
 
@@ -472,8 +472,8 @@ Flags:
 
       --to=STRING    保存到此目录, 默认为工作目录
 
-=== bnd config show --help
-Usage: bnd config show
+=== bdc config show --help
+Usage: bdc config show
 
 显示设置
 
@@ -482,8 +482,8 @@ Flags:
   -h, --help       显示帮助
   -v, --version    显示版本
 
-=== bnd config set --help
-Usage: bnd config set [flags]
+=== bdc config set --help
+Usage: bdc config set [flags]
 
 修改设置
 
@@ -501,8 +501,8 @@ Flags:
                                    上传限速, 如 512K, 0 为不限
       --proxy=PROXY                代理地址, 空字符串为不用代理
 
-=== bnd config reset --help
-Usage: bnd config reset
+=== bdc config reset --help
+Usage: bdc config reset
 
 恢复默认设置
 
@@ -511,8 +511,8 @@ Flags:
   -h, --help       显示帮助
   -v, --version    显示版本
 
-=== bnd update --help
-Usage: bnd update [flags]
+=== bdc update --help
+Usage: bdc update [flags]
 
 检查并安装新版本
 
