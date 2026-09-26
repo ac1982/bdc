@@ -906,4 +906,12 @@ func TestConfigSetAtomic(t *testing.T) {
 	if saved.Settings.SaveDir == "/tmp/new-downloads" {
 		t.Errorf("saved by a later command: %+v", saved.Settings)
 	}
+	for _, proxy := range []string{"http://[::1", "ftp:/x y", "127.0.0.1:7890"} {
+		if code := ta.run("config", "set", "--proxy", proxy); code != 2 || ta.cfg.Settings.Proxy != "" {
+			t.Errorf("proxy %q: exit %d, set %q", proxy, code, ta.cfg.Settings.Proxy)
+		}
+	}
+	if code := ta.run("config", "set", "--proxy", "socks5://127.0.0.1:1080"); code != 0 {
+		t.Errorf("a good proxy: exit %d %s", code, ta.stderr.String())
+	}
 }

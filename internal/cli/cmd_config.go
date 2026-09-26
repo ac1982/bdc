@@ -79,6 +79,11 @@ func (c *configSetCmd) Run(app *App) (Result, error) {
 		s.UploadLimit = int64(*c.UploadLimit)
 	}
 	if c.Proxy != nil {
+		if *c.Proxy != "" {
+			if _, err := parseProxy(*c.Proxy); err != nil {
+				return nil, err
+			}
+		}
 		s.Proxy = *c.Proxy
 	}
 	return app.saveSettings(s)
