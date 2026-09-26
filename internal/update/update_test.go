@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -50,15 +52,48 @@ func TestExtractAndReplace(t *testing.T) {
 	if err != nil || string(bin) != "new binary" {
 		t.Fatal(string(bin), err)
 	}
-	exe := filepath.Join(t.TempDir(), "bdc")
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "bdc")
 	os.WriteFile(exe, []byte("old"), 0o755)
-	if err := replace(exe, bin); err != nil {
+	// Files that happen to have the names earlier versions used are the user's.
+	os.WriteFile(exe+".old", []byte("backup"), 0o600)
+	os.Symlink(filepath.Join(dir, "elsewhere"), exe+".new")
+	tmp, err := os.CreateTemp(dir, ".bdc-update-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replace(exe, tmp, bin); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := os.ReadFile(exe); string(got) != "new binary" {
 		t.Fatal(string(got))
 	}
-	if _, err := os.Stat(exe + ".old"); !os.IsNotExist(err) {
-		t.Fatal("old binary left behind")
+	if fi, _ := os.Stat(exe); fi.Mode().Perm() != 0o755 {
+		t.Errorf("mode %v", fi.Mode())
+	}
+	if b, _ := os.ReadFile(exe + ".old"); string(b) != "backup" {
+		t.Error("the user's bdc.old was touched")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "elsewhere")); err == nil {
+		t.Error("wrote through the user's bdc.new symlink")
+	}
+	if left, _ := filepath.Glob(filepath.Join(dir, ".bdc-*")); len(left) > 0 {
+		t.Errorf("left behind: %v", left)
+	}
+}
+
+// Without write access to the executable's directory nothing is downloaded.
+func TestInstallNotWritable(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs a directory this user cannot write")
+	}
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "bdc")
+	os.WriteFile(exe, []byte("old"), 0o755)
+	os.Chmod(dir, 0o555)
+	defer os.Chmod(dir, 0o755)
+	r := &Release{archive: "http://127.0.0.1:1/never", sums: "http://127.0.0.1:1/never"}
+	if err := r.install(context.Background(), exe); !errors.Is(err, ErrNotWritable) {
+		t.Fatal(err)
 	}
 }

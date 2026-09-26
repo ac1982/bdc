@@ -71,9 +71,38 @@ func Newer(a, b string) bool {
 	return semver.Compare(a, b) > 0
 }
 
+// ErrNotWritable is returned by Install when the executable's directory is
+// not writable by this user, e.g. after the macOS installer put it into
+// /usr/local/bin.
+var ErrNotWritable = errors.New("bdc 所在的目录不可写")
+
 // Install downloads the release, checks it against checksums.txt and
-// replaces the running executable.
+// replaces the running executable. Nothing is downloaded unless the
+// executable can be replaced.
 func (r *Release) Install(ctx context.Context) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if exe, err = filepath.EvalSymlinks(exe); err != nil {
+		return err
+	}
+	return r.install(ctx, exe)
+}
+
+func (r *Release) install(ctx context.Context, exe string) error {
+	dir := filepath.Dir(exe)
+	// The new executable is written to a file of this update's own, beside
+	// the old one, so that a rename puts it in place.
+	tmp, err := os.CreateTemp(dir, ".bdc-update-*")
+	if errors.Is(err, os.ErrPermission) {
+		return fmt.Errorf("%w: %s", ErrNotWritable, dir)
+	}
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name()) // unless it was put in place
+	defer tmp.Close()
 	archive, err := get(ctx, r.archive)
 	if err != nil {
 		return fmt.Errorf("下载 %s: %w", r.archive, err)
@@ -90,14 +119,7 @@ func (r *Release) Install(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	exe, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	if exe, err = filepath.EvalSymlinks(exe); err != nil {
-		return err
-	}
-	return replace(exe, bin)
+	return replace(exe, tmp, bin)
 }
 
 func hasChecksum(sums, sum, name string) bool {
@@ -146,24 +168,44 @@ func extract(archive []byte) ([]byte, error) {
 	}
 }
 
-// replace swaps the executable at exe for bin. The old file is moved aside
-// first, which also works on Windows while it is running.
-func replace(exe string, bin []byte) error {
-	tmp := exe + ".new"
-	if err := os.WriteFile(tmp, bin, 0o755); err != nil {
+// replace writes bin to tmp, a new file beside exe, and puts it in place of
+// exe. Only files this update created are touched.
+func replace(exe string, tmp *os.File, bin []byte) error {
+	if _, err := tmp.Write(bin); err != nil {
 		return err
 	}
-	old := exe + ".old"
-	os.Remove(old)
-	if err := os.Rename(exe, old); err != nil {
-		os.Remove(tmp)
+	if err := tmp.Chmod(0o755); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, exe); err != nil {
-		os.Rename(old, exe)
+	if err := tmp.Close(); err != nil {
 		return err
 	}
-	os.Remove(old) // fails harmlessly on Windows; removed on the next update
+	if runtime.GOOS != "windows" {
+		return os.Rename(tmp.Name(), exe) // the running program keeps the old file
+	}
+	// Windows cannot replace a running executable, but can move it aside:
+	// to a name of this update's own, removed now if possible, else by the
+	// next update.
+	dir := filepath.Dir(exe)
+	if olds, _ := filepath.Glob(filepath.Join(dir, ".bdc-old-*")); len(olds) > 0 {
+		for _, o := range olds {
+			os.Remove(o)
+		}
+	}
+	old, err := os.CreateTemp(dir, ".bdc-old-*")
+	if err != nil {
+		return err
+	}
+	old.Close()
+	if err := os.Rename(exe, old.Name()); err != nil {
+		os.Remove(old.Name())
+		return err
+	}
+	if err := os.Rename(tmp.Name(), exe); err != nil {
+		os.Rename(old.Name(), exe)
+		return err
+	}
+	os.Remove(old.Name())
 	return nil
 }
 

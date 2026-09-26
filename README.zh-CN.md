@@ -43,7 +43,7 @@ $ bdc download --json -o ~/Downloads "/Photos/*.jpg"
 |---|---|
 | 能解析的输出 | `--json` 时 stdout **只有一份 JSON 文档**: 键有序, 大小以字节计, 时间为 RFC 3339, id 是精确整数. 进度和日志走 stderr. |
 | 知道哪里错了 | 失败时有 `error: {kind, message, exitCode, code?}` 和[有含义的退出码](#退出码): 输入有误 (改参数)、未登录 (去登录)、服务器失败 (稍后重试) 等. |
-| 永远不会卡住 | 没有终端时从不等待输入. 危险操作需要 `-y`, 缺了 `-y` 立即报用法错误, 不会停下来提问. |
+| 永远不会卡住 | 没有终端时从不等待输入. 需要确认的三个命令 (`logout`, `recycle delete`, `update`) 这时要加 `-y`, 缺了 `-y` 立即报用法错误, 不会停下来提问. 其他修改 (如移入回收站的 `rm`) 直接执行, 不需要确认. |
 | 保留部分进度 | 失败前已完成的工作仍在文档里: 传输中的每个文件都单独列出 `status`. |
 | 可以放心重试 | 对已存在的目录 `mkdir` 算成功, 已存在的文件标为 `skipped`. 中断的下载和上传从断点继续. |
 | 不用猜路径 | 下载结果给出每个文件的本地绝对路径 (`files[].file`). 通配符由 bdc 按网盘上实际存在的文件展开, 一个都没匹配到就报输入错误. |
@@ -80,7 +80,7 @@ $ bdc download --json -o ~/Downloads "/Photos/*.jpg"
 go install github.com/ac1982/bdc@latest    # 需要 Go 1.26+
 ```
 
-或者从 [Releases](../../releases) 下载. macOS 的 `.pkg` 安装包用 Developer ID 签名并经过 Apple 公证, 会把 `bdc` 装到 `/usr/local/bin`. 各系统的 `.tar.gz` 压缩包里是同一个程序, 放进 `PATH` 即可. `bdc update` 会安装更新的版本.
+或者从 [Releases](../../releases) 下载. macOS 的 `.pkg` 安装包用 Developer ID 签名并经过 Apple 公证, 会把 `bdc` 装到 `/usr/local/bin`. 压缩包 (`.tar.gz`, Windows 为 `.zip`) 里是同一个程序, 放进 `PATH` 即可. `bdc update` 会安装更新的版本; 如果 bdc 所在目录当前用户不能写入 (例如用 `.pkg` 安装后), 请用 `sudo` 运行.
 
 ## 登录
 
@@ -90,7 +90,7 @@ bdc login --cookies "BDUSS=…; STOKEN=…"  # 在 pan.baidu.com 的开发者工
 bdc who --json
 ```
 
-在 macOS 上, `--from-chrome` 需要给终端"完全磁盘访问权限". 转存别人的分享需要 `STOKEN`. bdc 从不打印 Cookie, 交互模式的历史里也从不保存 `login` 那一行.
+在 macOS 上, `--from-chrome` 需要给终端"完全磁盘访问权限". 转存别人的分享需要 `STOKEN`. bdc 从不打印 Cookie, bdc 交互模式的历史里也从不保存 `login` 那一行. 但你自己的 shell (zsh, bash) 会记下 `bdc login --cookies …`, 所以最好用 `--from-chrome`, 或在终端里运行 `bdc login` 后在提示处粘贴 Cookie.
 
 ## 自己用
 

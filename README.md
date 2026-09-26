@@ -43,7 +43,7 @@ $ bdc download --json -o ~/Downloads "/Photos/*.jpg"
 |---|---|
 | Output it can parse | `--json` puts **exactly one JSON document** on stdout (keys sorted, sizes in bytes, RFC 3339 times, exact integer ids). Progress and logs go to stderr. |
 | To know what went wrong | Every failure has `error: {kind, message, exitCode, code?}` and a [meaningful exit code](#exit-codes): *input* (fix the arguments), *auth* (log in), *failed* (retry later), and so on. |
-| Never to hang | Nothing waits for input without a terminal. Destructive commands need `-y`, and a missing `-y` is an immediate usage error, not a prompt. |
+| Never to hang | Nothing waits for input without a terminal. The three commands that ask for confirmation (`logout`, `recycle delete`, `update`) need `-y` there, and a missing `-y` is an immediate usage error, not a prompt. Other changes, such as `rm` (which moves to the recycle bin), run without asking. |
 | To keep partial progress | Whatever finished before a failure is still in the document: every file of a transfer is listed with its own `status`. |
 | Retries that are safe | `mkdir` of an existing directory succeeds; files already there are `skipped`. Interrupted downloads and uploads resume where they stopped. |
 | No path guessing | Downloads report each file's absolute local path (`files[].file`). Wildcards are expanded by bdc against what really exists, and a pattern that matches nothing is an *input* error. |
@@ -80,7 +80,7 @@ Every command documents its flags with `bdc <command> --help` (also as JSON with
 go install github.com/ac1982/bdc@latest    # Go 1.26+
 ```
 
-Or download a build from [Releases](../../releases). On macOS, the `.pkg` installer is signed with a Developer ID and notarized by Apple, and installs `bdc` into `/usr/local/bin`. The `.tar.gz` archives, for every system, hold the same binary: put it on your `PATH`. `bdc update` installs newer releases.
+Or download a build from [Releases](../../releases). On macOS, the `.pkg` installer is signed with a Developer ID and notarized by Apple, and installs `bdc` into `/usr/local/bin`. The archives (`.tar.gz`, or `.zip` for Windows) hold the same binary: put it on your `PATH`. `bdc update` installs newer releases. If bdc is in a directory you can't write to, as after the `.pkg` installer, run it with `sudo`.
 
 ## Log in
 
@@ -90,7 +90,7 @@ bdc login --cookies "BDUSS=…; STOKEN=…"  # copied from pan.baidu.com in your
 bdc who --json
 ```
 
-On macOS, `--from-chrome` needs Full Disk Access for the terminal. `STOKEN` is needed for saving others' shares. bdc never prints your cookies, and it never keeps a `login` line in the shell history.
+On macOS, `--from-chrome` needs Full Disk Access for the terminal. `STOKEN` is needed for saving others' shares. bdc never prints your cookies, and its interactive shell never keeps a `login` line in its history. Your own shell (zsh, bash) does record `bdc login --cookies …`, so prefer `--from-chrome`, or run `bdc login` in a terminal and paste the cookies at its prompt.
 
 ## Use it yourself
 

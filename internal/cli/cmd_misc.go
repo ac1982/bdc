@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -225,7 +226,9 @@ func (c *updateCmd) Run(app *App) (Result, error) {
 	if err := app.confirm(c.Yes, fmt.Sprintf("安装 %s?", rel.Version)); err != nil {
 		return r, err
 	}
-	if err := rel.Install(app.ctx); err != nil {
+	if err := rel.Install(app.ctx); errors.Is(err, update.ErrNotWritable) {
+		return r, withKind(Dependency, fmt.Errorf("%w; 请用 sudo bdc update, 或从 Releases 下载新的安装包", err))
+	} else if err != nil {
 		return r, err
 	}
 	r.Installed = true

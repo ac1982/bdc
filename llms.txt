@@ -40,7 +40,7 @@
 - `files[].status` in transfers: `downloaded`, `uploaded`, `rapid`, `skipped` (`reason`: `exists`, `same-size`, `symlink` for a symlinked local directory, which is not followed), `failed` (with `error`); `summary` counts them. A path that cannot be read, or two files that would land on the same target, fail on their own while the rest still transfers. If any file failed the command fails, but the document lists every file.
 - Shares: `bdc share create --json [-p <4 chars>] [--days n, 0 = forever] <path…>` → `shareId`, `link`, `pwd`, `url` (link with `?pwd=`). `bdc share save --json "<link>" [<code>] [--to <dir>]` saves someone else's share into the working directory (or `--to`, created if missing); the code may be in the link. Saving the same share again fails with code 4 (already saved). Saving your own share fails (Baidu: 文件已存在, code 2). `bdc share cancel <shareId…>`.
 - Offline downloads run on Baidu's servers: `bdc offline add --json --to <dir> <url…>` → `ids`; poll `bdc offline list --json <id…>` (`status` 0 = done, 1 = running).
-- `logout`, `recycle delete` and `update` need `-y` without a terminal. With no command and no terminal, bdc exits 64 instead of opening the shell.
+- `logout`, `recycle delete` and `update` need `-y` without a terminal. `update` fails with `dependency` (exit 3) when bdc's directory is not writable (e.g. installed by the macOS .pkg into /usr/local/bin): ask the user to run `sudo bdc update`. With no command and no terminal, bdc exits 64 instead of opening the shell.
 
 ## Command map
 
