@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chzyer/readline"
+	"github.com/ergochat/readline"
 	"github.com/kballard/go-shellquote"
 
 	"github.com/ac1982/baidunetdisk-cli/internal/config"
@@ -21,8 +21,8 @@ import (
 // shell reads commands from the terminal until exit, quit or Ctrl-D.
 func (a *App) shell() int {
 	dir, _ := config.Dir()
-	keys := a.keyboard() // shared with the questions commands ask
-	cfg := readline.Config{
+	rl, err := readline.NewFromConfig(&readline.Config{
+		Stdin:                  a.keyboard().editorInput(), // shared with the questions commands ask
 		Stdout:                 a.stderr,
 		Stderr:                 a.stderr,
 		HistoryFile:            filepath.Join(dir, "history"),
@@ -30,39 +30,37 @@ func (a *App) shell() int {
 		AutoComplete:           &completer{app: a, commands: commandNames()},
 		InterruptPrompt:        "^C",
 		EOFPrompt:              "exit",
+	})
+	if err != nil {
+		return a.report("", nil, err)
 	}
+	defer rl.Close()
 	fmt.Fprintln(a.stderr, "bdc", Version, "交互模式. 输入 help 查看命令, exit 退出. Tab 补全命令和网盘路径.")
 	for {
-		// A fresh editor for each line: once its line is read it takes no
-		// more input, which is left for the command's questions or the next line.
-		lineCfg := cfg // readline changes its config, and each editor keeps it
-		lineCfg.Stdin, lineCfg.Prompt = keys.editorInput(), a.prompt()
-		rl, err := readline.NewEx(&lineCfg)
-		if err != nil {
-			return a.report("", nil, err)
-		}
-		line, err := rl.Readline()
-		keys.endEdit()
-		args, perr := shellquote.Split(line)
-		if len(args) > 0 && args[0] == "help" {
-			args = append(args[1:], "--help")
-		}
-		if err == nil && perr == nil && historic(args) {
-			rl.SaveHistory(line)
-		}
-		rl.Close()
-		switch {
-		case errors.Is(err, readline.ErrInterrupt):
+		rl.SetPrompt(a.prompt())
+		line, err := rl.ReadLine()
+		if errors.Is(err, readline.ErrInterrupt) {
 			continue
-		case err != nil: // io.EOF: Ctrl-D
+		}
+		if err != nil { // io.EOF: Ctrl-D
 			return 0
-		case perr != nil:
-			fmt.Fprintln(a.stderr, "错误:", perr)
+		}
+		args, err := shellquote.Split(line)
+		if err != nil {
+			fmt.Fprintln(a.stderr, "错误:", err)
 			continue
-		case len(args) == 0:
+		}
+		if len(args) == 0 {
 			continue
+		}
+		switch {
 		case args[0] == "exit" || args[0] == "quit":
 			return 0
+		case args[0] == "help":
+			args = append(args[1:], "--help")
+		}
+		if historic(args) {
+			rl.SaveToHistory(line)
 		}
 		a.exec(args)
 	}

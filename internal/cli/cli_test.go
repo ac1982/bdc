@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -734,10 +733,8 @@ func TestKeyboardTypeAhead(t *testing.T) {
 	defer w.Close()
 	ta := newTestApp(t)
 	ta.stdin = r
-	k := ta.keyboard()
-	k.editorInput()
-	k.endEdit()         // a shell whose line is read: a command runs
-	w.WriteString("\n") // a stray Enter
+	ta.keyboard().editorInput() // a shell's editor, not reading: a command runs
+	w.WriteString("\n")         // a stray Enter
 	time.AfterFunc(100*time.Millisecond, func() { w.WriteString("y\n") })
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -761,10 +758,6 @@ func TestKeyboardEditorTakesALine(t *testing.T) {
 	buf := make([]byte, 64)
 	if n, _ := in.Read(buf); string(buf[:n]) != "login\n" {
 		t.Errorf("editor took %q", buf[:n])
-	}
-	k.endEdit()
-	if n, err := in.Read(buf); n != 0 || err != io.EOF {
-		t.Errorf("an editor whose turn ended read %q, %v", buf[:n], err)
 	}
 	if got, _ := ta.ask(context.Background(), "? "); got != "invalid" {
 		t.Errorf("answer %q", got)
@@ -790,5 +783,23 @@ func TestKeyboardShortReads(t *testing.T) {
 	}
 	if string(got) != "pwd\n" {
 		t.Errorf("got %q", got)
+	}
+}
+
+// The shell's editor is one for the whole session: reading many lines leaves
+// no goroutines behind.
+func TestShellEditorLifetime(t *testing.T) {
+	ta := newTestApp(t)
+	in := filepath.Join(t.TempDir(), "in")
+	os.WriteFile(in, []byte(strings.Repeat("ls /\n", 100)+"exit\n"), 0o600)
+	ta.stdin, _ = os.Open(in)
+	defer ta.stdin.Close()
+	before := runtime.NumGoroutine()
+	if code := ta.shell(); code != 0 {
+		t.Fatalf("shell: %d", code)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if after := runtime.NumGoroutine(); after > before+5 {
+		t.Errorf("goroutines %d → %d", before, after)
 	}
 }

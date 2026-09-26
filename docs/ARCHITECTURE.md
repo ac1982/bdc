@@ -93,7 +93,7 @@ Errors map to exit codes in one place (`exit.go`):
 | retry with backoff | cenkalti/backoff | MIT |
 | rate limit, errgroup | golang.org/x/time, golang.org/x/sync | BSD |
 | progress bars | schollz/progressbar | MIT |
-| interactive shell | chzyer/readline | MIT |
+| interactive shell | ergochat/readline (maintained fork of chzyer/readline: reads keys only while editing a line) | MIT |
 | record / replay in tests | dnaeon/go-vcr | BSD-2 |
 
 ## Testing

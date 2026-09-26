@@ -6,7 +6,7 @@ require (
 	github.com/alecthomas/kong v1.16.1
 	github.com/browserutils/kooky v0.2.10
 	github.com/cenkalti/backoff/v5 v5.0.3
-	github.com/chzyer/readline v1.5.1
+	github.com/ergochat/readline v0.1.3
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51
 	github.com/mattn/go-isatty v0.0.24
 	github.com/mattn/go-runewidth v0.0.30

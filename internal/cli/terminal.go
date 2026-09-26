@@ -26,8 +26,6 @@ type keyboard struct {
 	changed chan struct{} // closed and replaced on every change below
 	buf     []byte        // read, not yet taken
 	ended   bool          // the input ended
-	turn    int           // the line editor whose turn it is to take input; 0: none
-	turns   int           // editors so far
 }
 
 func newKeyboard(in *os.File) *keyboard {
@@ -83,39 +81,21 @@ func (k *keyboard) discard() {
 	k.buf = nil
 }
 
-// editorInput is the input of a line editor, whose turn to take input it
-// is until endEdit; then it ends.
-func (k *keyboard) editorInput() io.ReadCloser {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	k.turns++
-	k.turn = k.turns
-	k.notify()
-	return editorInput{k, k.turns}
-}
+// editorInput is the input of the shell's line editor, which reads only
+// while it reads a command line (as it asks for keys); what is typed
+// meanwhile is left for the command's questions or the next line.
+func (k *keyboard) editorInput() io.Reader { return editorInput{k} }
 
-// endEdit ends the line editor's turn: its line is read.
-func (k *keyboard) endEdit() {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	k.turn = 0
-	k.notify()
-}
+type editorInput struct{ k *keyboard }
 
-type editorInput struct {
-	k    *keyboard
-	turn int
-}
-
-// Read hands the editor input up to the end of a line at most, keeping what
-// follows for whoever reads next: the editor, if its line goes on, or the
-// command's questions, or the next line's editor.
+// Read hands the editor at most a line: the editor buffers what it reads,
+// and must not hold what follows.
 func (e editorInput) Read(p []byte) (int, error) {
 	k := e.k
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	k.wait(context.Background(), func() bool { return k.turn != e.turn || len(k.buf) > 0 || k.ended })
-	if k.turn != e.turn || len(k.buf) == 0 {
+	k.wait(context.Background(), func() bool { return len(k.buf) > 0 || k.ended })
+	if len(k.buf) == 0 {
 		return 0, io.EOF
 	}
 	n := min(len(p), len(k.buf))
@@ -126,8 +106,6 @@ func (e editorInput) Read(p []byte) (int, error) {
 	k.buf = k.buf[n:]
 	return n, nil
 }
-
-func (editorInput) Close() error { return nil }
 
 func (a *App) keyboard() *keyboard {
 	if a.keys == nil {
