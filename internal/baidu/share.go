@@ -20,25 +20,28 @@ type Share struct {
 // CreateShare shares paths with a 4-character extraction code for days
 // (0 = forever).
 func (c *Client) CreateShare(ctx context.Context, pwd string, days int, paths ...string) (Share, error) {
-	// Check first: pset answers a bad login or a missing path with unrelated errors.
-	if _, err := c.Metas(ctx, paths...); err != nil {
+	// The web app shares by fs_id; looking them up also catches missing paths
+	// and a bad login, which pset would answer with unrelated errors.
+	fs, err := c.Metas(ctx, paths...)
+	if err != nil {
 		return Share{}, err
 	}
-	list, _ := json.Marshal(paths)
+	ids := make([]int64, len(fs))
+	for i, f := range fs {
+		ids[i] = f.FsID
+	}
+	fids, _ := json.Marshal(ids)
 	form := url.Values{
-		"path_list":    {string(list)},
-		"schannel":     {"4"},
-		"channel_list": {"[]"},
-		"period":       {strconv.Itoa(days)},
-		"pwd":          {pwd},
-		"share_type":   {"9"},
+		"fid_list": {string(fids)}, "period": {strconv.Itoa(days)}, "pwd": {pwd},
+		"schannel": {"4"}, "channel_list": {"[]"}, "public": {"0"}, "is_knowledge": {"0"},
+		"eflag_disable": {"true"}, "linkOrQrcode": {"link"},
 	}
 	var resp struct {
 		ShareID    int64  `json:"shareid"`
 		Link       string `json:"link"`
 		ExpireTime int64  `json:"expiretime"`
 	}
-	if err := c.do(ctx, &request{op: "分享", url: panBase + "share/pset", form: form, ua: uaNetdisk}, &resp); err != nil {
+	if err := c.do(ctx, &request{op: "分享", path: "share/pset", query: url.Values{"channel": {"chunlei"}}, write: true, form: form}, &resp); err != nil {
 		return Share{}, err
 	}
 	if resp.Link == "" {
@@ -54,36 +57,37 @@ func (c *Client) CreateShare(ctx context.Context, pwd string, days int, paths ..
 // CancelShares cancels share links by id.
 func (c *Client) CancelShares(ctx context.Context, ids ...int64) error {
 	list, _ := json.Marshal(ids)
-	return c.do(ctx, &request{op: "取消分享", url: panBase + "share/cancel", form: url.Values{"shareid_list": {string(list)}}, ua: uaNetdisk}, nil)
+	return c.do(ctx, &request{op: "取消分享", path: "share/cancel", query: url.Values{"channel": {"chunlei"}}, write: true,
+		form: url.Values{"shareid_list": {string(list)}}}, nil)
 }
 
 // Shares lists the user's share links, newest first.
 func (c *Client) Shares(ctx context.Context) ([]Share, error) {
+	const pageSize = 100
 	var all []Share
 	for page := 1; ; page++ {
 		var resp struct {
-			List json.RawMessage `json:"list"` // [] or, when empty, {}
+			List []struct {
+				ShareID  int64  `json:"shareId"`
+				Link     string `json:"shortlink"`
+				Path     string `json:"typicalPath"`
+				Passwd   string `json:"passwd"`
+				ExpireAt int64  `json:"lastExpireTime"` // unix time; 0 for shares that never expire
+			} `json:"list"`
 		}
-		q := url.Values{"page": {strconv.Itoa(page)}, "desc": {"1"}, "order": {"time"}}
-		if err := c.do(ctx, &request{op: "列出分享", url: panBase + "share/record?" + q.Encode(), ua: uaNetdisk}, &resp); err != nil {
+		q := url.Values{"page": {strconv.Itoa(page)}, "num": {strconv.Itoa(pageSize)}, "order": {"ctime"}, "desc": {"1"}, "is_batch": {"1"}}
+		if err := c.do(ctx, &request{op: "列出分享", path: "share/record", query: q}, &resp); err != nil {
 			return all, err
 		}
-		var list []struct {
-			ShareID     int64  `json:"shareId"`
-			Link        string `json:"shortlink"`
-			Path        string `json:"typicalPath"`
-			ExpiredType int    `json:"expiredType"`
-			ExpiredTime int64  `json:"expiredTime"` // seconds left, 0 = never
-		}
-		if json.Unmarshal(resp.List, &list) != nil || len(list) == 0 {
-			return all, nil
-		}
-		for _, r := range list {
-			s := Share{ID: r.ShareID, Link: r.Link, Paths: []string{r.Path}}
-			if r.ExpiredTime > 0 {
-				s.Expires = time.Now().Add(time.Duration(r.ExpiredTime) * time.Second).Truncate(time.Second)
+		for _, r := range resp.List {
+			s := Share{ID: r.ShareID, Link: r.Link, Pwd: r.Passwd, Paths: []string{r.Path}}
+			if r.ExpireAt > 0 {
+				s.Expires = time.Unix(r.ExpireAt, 0)
 			}
 			all = append(all, s)
+		}
+		if len(resp.List) < pageSize {
+			return all, nil
 		}
 	}
 }

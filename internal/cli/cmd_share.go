@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"crypto/rand"
 	"fmt"
 	"io"
@@ -81,13 +82,13 @@ func (r sharesResult) Human(w io.Writer) {
 		fmt.Fprintln(w, "没有分享")
 		return
 	}
-	rows := [][]string{{"shareId", "链接", "到期", "路径"}}
+	rows := [][]string{{"shareId", "链接", "提取码", "到期", "路径"}}
 	for _, s := range r.Shares {
 		exp := "永久"
 		if !s.Expires.IsZero() {
 			exp = clock(s.Expires)
 		}
-		rows = append(rows, []string{strconv.FormatInt(s.ID, 10), s.Link, exp, strings.Join(s.Paths, ", ")})
+		rows = append(rows, []string{strconv.FormatInt(s.ID, 10), s.Link, cmp.Or(s.Pwd, "-"), exp, strings.Join(s.Paths, ", ")})
 	}
 	table(w, rows)
 }
@@ -155,6 +156,9 @@ func (c *shareSaveCmd) Run(app *App) (Result, error) {
 		return nil, err
 	}
 	dir := app.abs(c.To)
+	if _, _, err := app.ensureDir(client, dir); err != nil { // Baidu saves only into an existing directory
+		return nil, err
+	}
 	saved, err := client.SaveShare(app.ctx, link, dir)
 	if err != nil {
 		return nil, err

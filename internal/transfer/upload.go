@@ -22,9 +22,10 @@ import (
 
 // Uploader is the part of the Baidu client that uploads use.
 type Uploader interface {
-	Precreate(ctx context.Context, path string, h baidu.Hashes, r io.ReaderAt, overwrite bool, resumeID string) (baidu.Upload, error)
+	RapidUpload(ctx context.Context, path string, h baidu.Hashes, r io.ReaderAt, overwrite bool) (*baidu.File, error)
+	Precreate(ctx context.Context, path string, h baidu.Hashes, overwrite bool, resumeID string) (baidu.Upload, error)
 	UploadHost(ctx context.Context) (string, error)
-	UploadBlock(ctx context.Context, host, path string, up baidu.Upload, seq int, offset int64, data []byte) (string, error)
+	UploadBlock(ctx context.Context, host, path string, up baidu.Upload, seq int, data []byte) (string, error)
 	CreateFile(ctx context.Context, path string, size int64, up baidu.Upload, blocks []string, overwrite bool) (baidu.File, error)
 }
 
@@ -81,14 +82,18 @@ func (u *Upload) Run(ctx context.Context) (file baidu.File, rapid bool, err erro
 }
 
 func (u *Upload) run(ctx context.Context, f *os.File, h baidu.Hashes, recPath string) (baidu.File, bool, error) {
-	rec := loadUploadRecord(recPath, len(h.Blocks))
-	up, err := u.API.Precreate(ctx, u.Remote, h, f, u.Overwrite, rec.ID)
+	hit, err := u.API.RapidUpload(ctx, u.Remote, h, f, u.Overwrite)
 	if err != nil {
 		return baidu.File{}, false, err
 	}
-	if up.Rapid != nil {
+	if hit != nil { // Baidu already had the content
 		u.progress(h.Size)
-		return *up.Rapid, true, nil
+		return *hit, true, nil
+	}
+	rec := loadUploadRecord(recPath, len(h.Blocks))
+	up, err := u.API.Precreate(ctx, u.Remote, h, u.Overwrite, rec.ID)
+	if err != nil {
+		return baidu.File{}, false, err
 	}
 	if up.ID != rec.ID {
 		rec = &uploadRecord{ID: up.ID, Blocks: make([]string, len(h.Blocks))}
@@ -118,7 +123,7 @@ func (u *Upload) run(ctx context.Context, f *os.File, h baidu.Hashes, recPath st
 				return err
 			}
 			md, err := backoff.Retry(gctx, func() (string, error) {
-				return u.API.UploadBlock(gctx, host, u.Remote, up, i, off, data)
+				return u.API.UploadBlock(gctx, host, u.Remote, up, i, data)
 			}, backoff.WithMaxTries(5))
 			if err != nil {
 				return err

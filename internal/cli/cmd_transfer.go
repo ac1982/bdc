@@ -31,6 +31,7 @@ type item struct {
 	Error  string `json:"error,omitempty"`
 
 	err       error
+	fsID      int64  // download: the remote file
 	version   string // download: identifies the remote version, for resuming
 	overwrite bool   // upload: replace the existing target
 }
@@ -258,7 +259,7 @@ func (c *downloadCmd) Run(app *App) (Result, error) {
 		}
 		d := &transfer.Download{
 			Client: client.HTTP(), Header: baidu.DownloadHeader(),
-			URLs: func(ctx context.Context) ([]string, error) { return client.DownloadURLs(ctx, it.Remote) },
+			URLs: func(ctx context.Context) ([]string, error) { return client.DownloadURLs(ctx, it.fsID) },
 			ID:   it.version, Size: it.Size, Dest: it.Local, Conns: conns, Limit: lim, Progress: progress,
 		}
 		if err := d.Run(ctx); errors.Is(err, transfer.ErrOccupied) {
@@ -298,7 +299,7 @@ func (c *downloadCmd) plan(ctx context.Context, client *baidu.Client, p, saveTo 
 			emptyDest[f.Path] = dest
 			return nil
 		}
-		it := &item{Remote: f.Path, Local: dest, Size: f.Size, version: fmt.Sprint(f.FsID, "@", f.Mtime.Unix())}
+		it := &item{Remote: f.Path, Local: dest, Size: f.Size, fsID: f.FsID, version: fmt.Sprint(f.FsID, "@", f.Mtime.Unix())}
 		if _, err := os.Stat(dest); err == nil && !c.Overwrite {
 			it.Status, it.Reason = "skipped", "exists"
 		}

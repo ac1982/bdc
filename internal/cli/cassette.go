@@ -55,7 +55,7 @@ func cassetteTransport(real http.RoundTripper) http.RoundTripper {
 // and the samples precreate derives from the time.
 var volatile = map[string]bool{
 	"time": true, "rand": true, "sign": true, "timestamp": true, "t": true, "devuid": true, "cuid": true,
-	"bdstoken": true, "bdusstoken": true, "uploadid": true, "local_mtime": true, "local_ctime": true, "data_time": true,
+	"bdstoken": true, "bdusstoken": true, "sekey": true, "uploadid": true, "local_mtime": true, "local_ctime": true, "data_time": true,
 	"data_offset": true, "data_content": true, "data_length": true, "Client_logid": true,
 }
 
@@ -128,7 +128,7 @@ func recorded(i cassette.Request) *http.Request {
 	return r
 }
 
-var secret = regexp.MustCompile(`(BDUSS|STOKEN|bdstoken|BDCLND|bdusstoken|randsk)("?\s*[=:]\s*"?)[^&;",\s]+`)
+var secret = regexp.MustCompile(`(BDUSS|STOKEN|bdstoken|BDCLND|bdusstoken|randsk|sekey)("?\s*[=:]\s*"?)[^&;",\s]+`)
 
 // redact removes credentials before the recording is written.
 func redact(i *cassette.Interaction) error {

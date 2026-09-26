@@ -15,8 +15,7 @@ import (
 type recycleCmd struct {
 	List    recycleListCmd    `cmd:"" help:"列出回收站"`
 	Restore recycleRestoreCmd `cmd:"" help:"还原文件"`
-	Delete  recycleDeleteCmd  `cmd:"" help:"彻底删除文件"`
-	Clear   recycleClearCmd   `cmd:"" help:"清空回收站"`
+	Delete  recycleDeleteCmd  `cmd:"" help:"彻底删除文件 (百度可能要求在网页或手机上完成安全验证)"`
 }
 
 type recycleListCmd struct{}
@@ -81,30 +80,6 @@ func (c *recycleDeleteCmd) Run(app *App) (Result, error) {
 	return idsResult{c.IDs, "彻底删除"}, nil
 }
 
-type recycleClearCmd struct {
-	Yes bool `short:"y" help:"不再确认"`
-}
-
-func (c *recycleClearCmd) Run(app *App) (Result, error) {
-	if err := app.confirm(c.Yes, "清空回收站, 无法恢复?"); err != nil {
-		return nil, err
-	}
-	client, err := app.baidu()
-	if err != nil {
-		return nil, err
-	}
-	if err := client.EmptyRecycleBin(app.ctx); err != nil {
-		return nil, err
-	}
-	return doneResult("已清空回收站"), nil
-}
-
-// doneResult is a result with nothing to report but a message for people.
-type doneResult string
-
-func (d doneResult) Human(w io.Writer)            { fmt.Fprintln(w, string(d)) }
-func (d doneResult) MarshalJSON() ([]byte, error) { return []byte("{}"), nil }
-
 // offline
 
 type offlineCmd struct {
@@ -112,7 +87,6 @@ type offlineCmd struct {
 	List   offlineListCmd   `cmd:"" help:"列出任务"`
 	Cancel offlineCancelCmd `cmd:"" help:"取消任务"`
 	Delete offlineDeleteCmd `cmd:"" help:"删除任务记录"`
-	Clear  offlineClearCmd  `cmd:"" help:"清除已结束的任务记录"`
 }
 
 type offlineAddCmd struct {
@@ -195,19 +169,6 @@ type offlineDeleteCmd struct {
 
 func (c *offlineDeleteCmd) Run(app *App) (Result, error) {
 	return eachID(app, c.IDs, "删除", (*baidu.Client).DeleteOfflineTask)
-}
-
-type offlineClearCmd struct{}
-
-func (c *offlineClearCmd) Run(app *App) (Result, error) {
-	client, err := app.baidu()
-	if err != nil {
-		return nil, err
-	}
-	if err := client.ClearOfflineTasks(app.ctx); err != nil {
-		return nil, err
-	}
-	return doneResult("已清除结束的任务"), nil
 }
 
 // eachID applies op to each id, stopping at the first error.

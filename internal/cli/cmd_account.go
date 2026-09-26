@@ -21,7 +21,7 @@ type loginCmd struct {
 
 type accountResult struct {
 	LoggedIn bool   `json:"loggedIn"`
-	UID      uint64 `json:"uid,omitempty"`
+	UK       int64  `json:"uk,omitempty"`
 	Name     string `json:"name,omitempty"`
 	Workdir  string `json:"workdir,omitempty"`
 	Current  bool   `json:"current,omitempty"` // in users: the active account
@@ -31,7 +31,7 @@ func newAccountResult(a *config.Account) accountResult {
 	if a == nil {
 		return accountResult{}
 	}
-	return accountResult{LoggedIn: true, UID: a.UID, Name: a.Name, Workdir: a.Workdir}
+	return accountResult{LoggedIn: true, UK: a.UK, Name: a.Name, Workdir: a.Workdir}
 }
 
 func (r accountResult) Human(w io.Writer) {
@@ -39,7 +39,7 @@ func (r accountResult) Human(w io.Writer) {
 		fmt.Fprintln(w, "未登录")
 		return
 	}
-	fmt.Fprintf(w, "%s (uid %d), 工作目录 %s\n", r.Name, r.UID, r.Workdir)
+	fmt.Fprintf(w, "%s (uk %d), 工作目录 %s\n", r.Name, r.UK, r.Workdir)
 }
 
 func (c *loginCmd) Run(app *App) (Result, error) {
@@ -64,7 +64,7 @@ func (c *loginCmd) Run(app *App) (Result, error) {
 		return nil, usagef("需要 --cookies, --from-chrome 或 --from-edge")
 	}
 
-	client, err := newClient(app.cfg.Settings, cookies, 0, app.transport)
+	client, err := newClient(app.cfg.Settings, cookies, app.transport)
 	if err != nil {
 		return nil, withKind(Input, err)
 	}
@@ -72,7 +72,7 @@ func (c *loginCmd) Run(app *App) (Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	app.cfg.Put(config.Account{UID: user.UID, Name: user.Name, Cookies: cookies})
+	app.cfg.Put(config.Account{UK: user.UK, Name: user.Name, Cookies: withoutShareCookies(cookies)})
 	if err := app.cfg.Save(); err != nil {
 		return nil, err
 	}
@@ -88,10 +88,10 @@ func (c *logoutCmd) Run(app *App) (Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := app.confirm(c.Yes, fmt.Sprintf("退出帐号 %s (uid %d)?", acc.Name, acc.UID)); err != nil {
+	if err := app.confirm(c.Yes, fmt.Sprintf("退出帐号 %s (uk %d)?", acc.Name, acc.UK)); err != nil {
 		return nil, err
 	}
-	app.cfg.Remove(acc.UID)
+	app.cfg.Remove(acc.UK)
 	if err := app.cfg.Save(); err != nil {
 		return nil, err
 	}
@@ -115,13 +115,13 @@ func (r usersResult) Human(w io.Writer) {
 		fmt.Fprintln(w, "没有已登录的帐号")
 		return
 	}
-	rows := [][]string{{"", "UID", "用户名", "工作目录"}}
+	rows := [][]string{{"", "UK", "用户名", "工作目录"}}
 	for _, u := range r.Users {
 		mark := ""
 		if u.Current {
 			mark = "*"
 		}
-		rows = append(rows, []string{mark, strconv.FormatUint(u.UID, 10), u.Name, u.Workdir})
+		rows = append(rows, []string{mark, strconv.FormatInt(u.UK, 10), u.Name, u.Workdir})
 	}
 	table(w, rows)
 }
@@ -131,20 +131,20 @@ func (c *usersCmd) Run(app *App) (Result, error) {
 	for i := range app.cfg.Accounts {
 		a := &app.cfg.Accounts[i]
 		u := newAccountResult(a)
-		u.Current = a.UID == app.cfg.Active
+		u.Current = a.UK == app.cfg.Active
 		r.Users = append(r.Users, u)
 	}
 	return r, nil
 }
 
 type suCmd struct {
-	User string `arg:"" help:"要切换到的帐号: uid 或用户名"`
+	User string `arg:"" help:"要切换到的帐号: uk 或用户名"`
 }
 
 func (c *suCmd) Run(app *App) (Result, error) {
 	for _, a := range app.cfg.Accounts {
-		if strconv.FormatUint(a.UID, 10) == c.User || a.Name == c.User {
-			app.cfg.Active = a.UID
+		if strconv.FormatInt(a.UK, 10) == c.User || a.Name == c.User {
+			app.cfg.Active = a.UK
 			if err := app.cfg.Save(); err != nil {
 				return nil, err
 			}
@@ -180,4 +180,16 @@ func (c *quotaCmd) Run(app *App) (Result, error) {
 		return nil, err
 	}
 	return quotaResult{Total: q.Total, Used: q.Used, Free: q.Total - q.Used}, nil
+}
+
+// withoutShareCookies drops BDCLND, which opens one share after its code was
+// entered; kept from a browser it only gets in the way of other shares.
+func withoutShareCookies(cookies string) string {
+	var keep []string
+	for _, part := range strings.Split(cookies, ";") {
+		if part = strings.TrimSpace(part); part != "" && !strings.HasPrefix(part, "BDCLND=") {
+			keep = append(keep, part)
+		}
+	}
+	return strings.Join(keep, "; ")
 }

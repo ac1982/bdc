@@ -27,11 +27,16 @@ and is the only package that prints. The protocol itself is written up in
 
 ## `internal/baidu`
 
-A `Client` holds an `*http.Client` and the login cookies. Every endpoint is a
-method that builds a request, sends it through `Client.do`, and decodes the
-response into a typed struct. `do` owns the cross-cutting parts: headers, the
-two error conventions (PCS `error_code` and pan `errno`), and retry of
-transient failures.
+A `Client` holds an `*http.Client` and the login cookies, and speaks the API
+of Baidu's web client exactly as that client does: a browser's headers, the
+web app's common parameters, and the bdstoken on every change (fetched once
+from the template variables, which also give the user and the download
+signature's inputs). Every endpoint is a method that builds a request, sends
+it through `Client.do`, and decodes the response into a typed struct. `do`
+owns the cross-cutting parts: that identity, the error conventions (`errno`,
+`error_code`, per-item errors of batch calls, HTTP status), and retry of
+transient failures. When Baidu's behaviour is in doubt, the reference is the
+real web client in a browser (see [baidu-api.md](baidu-api.md)).
 
 Errors are `*baidu.Error{Op, Code, Message}`. Callers classify with
 `errors.Is(err, baidu.ErrNotFound)` and friends; the numeric `Code` is kept for

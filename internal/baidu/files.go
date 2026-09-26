@@ -10,8 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/cenkalti/backoff/v5"
 )
 
 // File is a file or directory in the netdisk.
@@ -79,12 +77,9 @@ func (c *Client) List(ctx context.Context, dir string) ([]File, error) {
 		var resp struct {
 			List []rawFile `json:"list"`
 		}
-		q := url.Values{
-			"dir": {dir}, "order": {"name"}, "desc": {"0"}, "clienttype": {"0"},
-			"num": {strconv.Itoa(pageSize)}, "page": {strconv.Itoa(page)},
-		}
-		err := c.do(ctx, &request{op: "列出目录 " + dir, url: panBase + "api/list?" + q.Encode(), ua: uaNetdisk}, &resp)
-		if err != nil {
+		q := url.Values{"dir": {dir}, "order": {"name"}, "desc": {"0"},
+			"num": {strconv.Itoa(pageSize)}, "page": {strconv.Itoa(page)}}
+		if err := c.do(ctx, &request{op: "列出目录 " + dir, path: "api/list", query: q}, &resp); err != nil {
 			return all, err
 		}
 		all = append(all, files(resp.List)...)
@@ -141,12 +136,12 @@ func (c *Client) Metas(ctx context.Context, paths ...string) ([]File, error) {
 		return len(url.QueryEscape(string(target))) <= maxURLParam
 	}) {
 		target, _ := json.Marshal(batch)
-		q := url.Values{"target": {string(target)}, "dlink": {"0"}, "blocks": {"1"}}
 		var resp struct {
 			Info []rawFile `json:"info"`
 		}
 		op := "获取 " + describe(batch)
-		if err := c.do(ctx, &request{op: op, url: panBase + "api/filemetas?" + q.Encode(), ua: uaNetdisk}, &resp); err != nil {
+		q := url.Values{"target": {string(target)}, "dlink": {"0"}, "blocks": {"1"}}
+		if err := c.do(ctx, &request{op: op, path: "api/filemetas", query: q}, &resp); err != nil {
 			return all, err
 		}
 		if len(resp.Info) != len(batch) {
@@ -180,62 +175,37 @@ func splitBy[T any](items []T, fits func([]T) bool) [][]T {
 
 func byCount[T any](n int) func([]T) bool { return func(b []T) bool { return len(b) <= n } }
 
-// Mkdir creates a directory and any missing parents.
+// Mkdir creates a directory and any missing parents. It fails if the name
+// is taken (rtype=0); without rtype Baidu would pick another name.
 func (c *Client) Mkdir(ctx context.Context, dir string) (File, error) {
 	var r struct {
 		FsID  int64 `json:"fs_id"`
 		Ctime int64 `json:"ctime"`
 		Mtime int64 `json:"mtime"`
 	}
-	form := url.Values{"path": {dir}, "isdir": {"1"}, "rtype": {"0"}}
-	if err := c.do(ctx, &request{op: "创建目录 " + dir, url: panBase + "api/create?a=commit", form: form, ua: uaNetdisk}, &r); err != nil {
+	req := &request{op: "创建目录 " + dir, path: "api/create", query: url.Values{"a": {"commit"}}, write: true,
+		form: url.Values{"path": {dir}, "isdir": {"1"}, "rtype": {"0"}, "block_list": {"[]"}}}
+	if err := c.do(ctx, req, &r); err != nil {
 		return File{}, err
 	}
 	return File{FsID: r.FsID, Path: dir, Name: path.Base(dir), IsDir: true, Ctime: time.Unix(r.Ctime, 0), Mtime: time.Unix(r.Mtime, 0)}, nil
 }
 
 // Remove moves files and directories to the recycle bin and returns the
-// paths removed, which on failure may be some of them. The pan metadata call
-// checks first that every path exists and that the login is valid (PCS
-// reports neither); the delete itself goes through PCS, because pan's
-// filemanager delete may demand an interactive security check (errno 132)
-// that a command line cannot pass.
+// paths removed, which on failure may be some of them. Every path must
+// exist: Baidu itself would silently accept missing ones.
 func (c *Client) Remove(ctx context.Context, paths ...string) ([]string, error) {
 	if _, err := c.Metas(ctx, paths...); err != nil {
 		return nil, err
 	}
 	var done []string
 	for _, batch := range splitBy(paths, byCount[string](maxBatch)) {
-		list := make([]map[string]string, len(batch))
-		for i, p := range batch {
-			list[i] = map[string]string{"path": p}
-		}
-		req := &request{op: "删除 " + describe(batch), url: pcsURL("file", "delete", nil), param: map[string]any{"list": list}}
-		if err := c.whenIdle(ctx, func() error { return c.do(ctx, req, nil) }); err != nil {
+		if err := c.fileManager(ctx, "delete", "删除 "+describe(batch), batch); err != nil {
 			return done, err
 		}
 		done = append(done, batch...)
 	}
 	return done, nil
-}
-
-// errBusy is PCS's "other async job is doing now": an earlier delete is still
-// running on Baidu's side, and this request was not carried out.
-const errBusy = 31171
-
-// whenIdle runs op, and again (with growing pauses, for up to a minute)
-// while Baidu reports it busy. Since a busy request did nothing, repeating
-// it is safe.
-func (c *Client) whenIdle(ctx context.Context, op func() error) error {
-	_, err := backoff.Retry(ctx, func() (struct{}, error) {
-		err := op()
-		if err != nil && Code(err) != errBusy {
-			err = backoff.Permanent(err)
-		}
-		return struct{}{}, err
-	}, backoff.WithBackOff(&backoff.ExponentialBackOff{InitialInterval: time.Second, Multiplier: 2, MaxInterval: 10 * time.Second}),
-		backoff.WithMaxElapsedTime(time.Minute))
-	return err
 }
 
 // Rename is one source and destination of a copy or move.
@@ -255,6 +225,13 @@ func (c *Client) Copy(ctx context.Context, pairs ...Rename) ([]Rename, error) {
 // creating missing parent directories. It returns the pairs that were done.
 func (c *Client) Move(ctx context.Context, pairs ...Rename) ([]Rename, error) {
 	return c.renameAll(ctx, "move", "移动", pairs)
+}
+
+// RenameInPlace gives a file or directory a new name in its directory. Unlike
+// a move it can change only the case of a name.
+func (c *Client) RenameInPlace(ctx context.Context, p, name string) error {
+	list := []map[string]string{{"path": p, "newname": name}}
+	return c.fileManager(ctx, "rename", "重命名 "+p, list)
 }
 
 func (c *Client) renameAll(ctx context.Context, opera, verb string, pairs []Rename) ([]Rename, error) {
@@ -311,11 +288,17 @@ func moves(pairs []Rename) []map[string]string {
 	return list
 }
 
-// fileManager runs a batch copy or move; an existing target fails it.
+// fileManager runs a batch delete, rename, copy or move, synchronously (the
+// web app polls an async task instead; the sync answer carries each item's
+// result). An existing target fails an item. Deletes say, as the web app's
+// do, that a security check could be shown (newVerify).
 func (c *Client) fileManager(ctx context.Context, opera, op string, list any) error {
 	data, _ := json.Marshal(list)
 	q := url.Values{"opera": {opera}, "async": {"0"}, "onnest": {"fail"}}
-	return c.do(ctx, &request{op: op, url: panBase + "api/filemanager?" + q.Encode(), form: url.Values{"filelist": {string(data)}}, ua: uaNetdisk}, nil)
+	if opera == "delete" {
+		q.Set("newVerify", "1")
+	}
+	return c.do(ctx, &request{op: op, path: "api/filemanager", query: q, write: true, form: url.Values{"filelist": {string(data)}}}, nil)
 }
 
 // Search finds files under dir whose name contains keyword.
@@ -330,7 +313,7 @@ func (c *Client) Search(ctx context.Context, dir, keyword string, recursive bool
 			List    []rawFile `json:"list"`
 			HasMore int       `json:"has_more"`
 		}
-		if err := c.do(ctx, &request{op: "搜索 " + dir, url: panBase + "api/search?" + q.Encode(), ua: uaNetdisk}, &resp); err != nil {
+		if err := c.do(ctx, &request{op: "搜索 " + dir, path: "api/search", query: q}, &resp); err != nil {
 			return all, err
 		}
 		all = append(all, files(resp.List)...)

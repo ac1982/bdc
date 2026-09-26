@@ -40,33 +40,33 @@ func TestDecode(t *testing.T) {
 	}
 }
 
-// The fake rejects plain HTTP, so logging in proves the login stays on HTTPS.
+// The fake rejects plain HTTP and checks the login, as the web app is checked.
 func TestWhoamiOverHTTPS(t *testing.T) {
 	f := baidutest.New()
-	c, err := New(f.Client(), baidutest.Cookies, 0)
+	c, err := New(f.Client(), baidutest.Cookies)
 	if err != nil {
 		t.Fatal(err)
 	}
 	u, err := c.Whoami(context.Background())
-	if err != nil || u.UID != baidutest.UID || c.UID != baidutest.UID {
+	if err != nil || u.UK != baidutest.UK || u.Name != baidutest.Name {
 		t.Fatal(u, err)
 	}
-	bad, _ := New(f.Client(), "BDUSS=nope", 0)
+	bad, _ := New(f.Client(), "BDUSS=nope")
 	if _, err := bad.Whoami(context.Background()); !errors.Is(err, ErrAuth) {
 		t.Fatal(err)
 	}
 }
 
-// Concurrent uploads share one client; its cached uk must be safe to fill.
-func TestUKConcurrent(t *testing.T) {
-	c, _ := New(baidutest.New().Client(), baidutest.Cookies, 0)
-	done := make(chan int64)
+// Concurrent uploads share one client; its cached bdstoken must be safe to fill.
+func TestTokenConcurrent(t *testing.T) {
+	c, _ := New(baidutest.New().Client(), baidutest.Cookies)
+	done := make(chan string)
 	for range 8 {
-		go func() { uk, _ := c.UK(context.Background()); done <- uk }()
+		go func() { tok, _ := c.token(context.Background()); done <- tok }()
 	}
 	for range 8 {
-		if <-done != 7 {
-			t.Fatal("wrong uk")
+		if <-done == "" {
+			t.Fatal("no token")
 		}
 	}
 }
@@ -104,7 +104,7 @@ func TestSaveShareServiceDown(t *testing.T) {
 		calls++
 		return &http.Response{StatusCode: 500, Status: "500 Internal Server Error", Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
 	})}
-	c, _ := New(hc, baidutest.Cookies, 1)
+	c, _ := New(hc, baidutest.Cookies)
 	link, _ := ParseShareLink("https://pan.baidu.com/s/1abc?pwd=abcd", "")
 	_, err := c.SaveShare(context.Background(), link, "/x")
 	if err == nil || !strings.Contains(err.Error(), "暂时不可用") || calls != 1 {
@@ -127,9 +127,9 @@ func TestNewestCookieWins(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader(`{"errno":0}`)), Request: r}, nil
 	})}
-	c, _ := New(hc, "BDUSS=x; BDCLND=stale", 1)
+	c, _ := New(hc, "BDUSS=x; BDCLND=stale")
 	for range 2 {
-		c.do(context.Background(), &request{op: "t", url: panBase + "share/list"}, nil)
+		c.do(context.Background(), &request{op: "t", path: "share/list"}, nil)
 	}
 	if strings.Contains(sent[1], "stale") || !strings.Contains(sent[1], "BDCLND=fresh") || !strings.Contains(sent[1], "BDUSS=x") {
 		t.Fatalf("second request sent %q", sent[1])

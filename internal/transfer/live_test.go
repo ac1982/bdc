@@ -22,7 +22,7 @@ func TestLive(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	c, err := baidu.New(nil, cookies, 0)
+	c, err := baidu.New(nil, cookies)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,8 +50,9 @@ func TestLive(t *testing.T) {
 		t.Fatal("upload:", f, rapid, err)
 	}
 	// A single-block file uploaded twice: the second time is instant. (After a
-	// multi-block upload Baidu stores md5(block list), so those never match.)
-	small := writeTemp(t, []byte("bdc live "+time.Now().String()))
+	// multi-block upload Baidu stores md5(block list), so those never match;
+	// files under 256 KiB are not tried, as the web app does not.)
+	small := writeTemp(t, append(payload(300<<10), time.Now().String()...))
 	for i, want := range []bool{false, true} {
 		su := &Upload{API: c, Local: small, Remote: root + "/small" + string(rune('0'+i)), StateDir: t.TempDir()}
 		if _, rapid, err := su.Run(ctx); err != nil || rapid != want {
@@ -76,10 +77,14 @@ func TestLive(t *testing.T) {
 	_, rapid, err = empty.Run(ctx)
 	t.Logf("zero-byte upload: rapid=%v err=%v", rapid, err)
 
-	// Download with several connections and compare.
+	// Download with several connections and compare (the overwrite gave the
+	// file a new fs id).
+	if f, err = c.Meta(ctx, root+"/big.bin"); err != nil {
+		t.Fatal(err)
+	}
 	dest := filepath.Join(t.TempDir(), "big.bin")
 	d := &Download{Client: c.HTTP(), Header: baidu.DownloadHeader(), Size: int64(len(content)), Dest: dest, Conns: 4,
-		URLs: func(ctx context.Context) ([]string, error) { return c.DownloadURLs(ctx, root+"/big.bin") }}
+		URLs: func(ctx context.Context) ([]string, error) { return c.DownloadURLs(ctx, f.FsID) }}
 	if err := d.Run(ctx); err != nil {
 		t.Fatal("download:", err)
 	}

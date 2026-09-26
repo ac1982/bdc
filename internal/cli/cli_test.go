@@ -31,7 +31,7 @@ func newTestApp(t *testing.T) *testApp {
 		t.Fatal(err)
 	}
 	cfg.Settings.SaveDir = t.TempDir()
-	cfg.Put(config.Account{UID: baidutest.UID, Name: baidutest.Name, Cookies: baidutest.Cookies})
+	cfg.Put(config.Account{UK: baidutest.UK, Name: baidutest.Name, Cookies: baidutest.Cookies})
 	null, _ := os.Open(os.DevNull)
 	t.Cleanup(func() { null.Close() })
 	ta := &testApp{fake: baidutest.New()}
@@ -355,19 +355,14 @@ func TestCaseOnlyRename(t *testing.T) {
 	}
 }
 
-func TestCaseOnlyRenameHalfDone(t *testing.T) {
+func TestCaseOnlyRenameIsInPlace(t *testing.T) {
 	ta := newTestApp(t)
 	ta.fake.Put("/a.txt", []byte("a"), 1)
-	ta.fake.Fail = func(endpoint string, n int) any {
-		if endpoint == "pan.baidu.com/api/filemanager" && n == 2 {
-			return map[string]any{"errno": 132}
-		}
-		return nil
+	if code := ta.run("mv", "/a.txt", "/A.txt"); code != 0 || ta.fake.Name("/a.txt") != "A.txt" {
+		t.Errorf("%d %s name=%q", code, ta.stderr.String(), ta.fake.Name("/a.txt"))
 	}
-	code, doc := ta.json(t, "mv", "/a.txt", "/A.txt")
-	items, _ := doc["items"].([]any)
-	if code != 4 || len(items) != 1 || items[0].(map[string]any)["to"] != "/A.txt.bdc-rename" {
-		t.Errorf("%d %v", code, doc)
+	if ta.fake.Requests["pan.baidu.com/api/filemanager"] != 1 {
+		t.Errorf("%d file-manager calls, want one rename", ta.fake.Requests["pan.baidu.com/api/filemanager"])
 	}
 }
 
@@ -423,8 +418,8 @@ func TestRemoveReportsPartialBatches(t *testing.T) {
 		ta.fake.Put(fmt.Sprintf("/d/%03d", i), nil, 1)
 	}
 	ta.fake.Fail = func(endpoint string, n int) any {
-		if endpoint == "pcs.baidu.com/rest/2.0/pcs/file?delete" && n == 2 {
-			return map[string]any{"error_code": 31045, "error_msg": "user not exists"}
+		if endpoint == "pan.baidu.com/api/filemanager" && n == 2 {
+			return map[string]any{"errno": 132}
 		}
 		return nil
 	}
@@ -434,17 +429,49 @@ func TestRemoveReportsPartialBatches(t *testing.T) {
 	}
 }
 
-// A delete that Baidu reports busy (an earlier one still running) is retried.
-func TestRemoveWaitsWhileBusy(t *testing.T) {
+func TestRecycle(t *testing.T) {
 	ta := newTestApp(t)
-	ta.fake.Put("/f", []byte("f"), 1)
-	ta.fake.Fail = func(endpoint string, n int) any {
-		if endpoint == "pcs.baidu.com/rest/2.0/pcs/file?delete" && n == 1 {
-			return map[string]any{"error_code": 31171, "error_msg": "other async job is doing now"}
-		}
-		return nil
+	ta.fake.Put("/d/f.txt", []byte("f"), 1)
+	ta.run("rm", "/d")
+	_, doc := ta.json(t, "recycle", "list")
+	files := doc["files"].([]any)
+	if len(files) != 1 {
+		t.Fatalf("recycle bin: %v", doc)
 	}
-	if code := ta.run("rm", "/f"); code != 0 || ta.fake.Exists("/f") {
-		t.Errorf("%d %s", code, ta.stderr.String())
+	id := fmt.Sprint(int64(files[0].(map[string]any)["fsId"].(float64)))
+	if code := ta.run("recycle", "restore", id); code != 0 || !ta.fake.Exists("/d/f.txt") {
+		t.Errorf("restore: %d %s", code, ta.stderr.String())
+	}
+	// Permanent deletion asks for a security check even on the web; say so.
+	code, doc := ta.json(t, "recycle", "delete", "-y", id)
+	if e := doc["error"].(map[string]any); code != 4 || e["code"] != 132.0 || !strings.Contains(e["message"].(string), "验证") {
+		t.Errorf("purge: %d %v", code, doc)
+	}
+}
+
+func TestOffline(t *testing.T) {
+	ta := newTestApp(t)
+	_, doc := ta.json(t, "offline", "add", "--to", "/dl", "https://example.com/a.iso")
+	ids := doc["ids"].([]any)
+	if len(ids) != 1 {
+		t.Fatalf("add: %v", doc)
+	}
+	if _, doc := ta.json(t, "offline", "list"); len(doc["tasks"].([]any)) != 1 {
+		t.Errorf("list: %v", doc)
+	}
+	if code := ta.run("offline", "delete", fmt.Sprint(int64(ids[0].(float64)))); code != 0 {
+		t.Errorf("delete: %s", ta.stderr.String())
+	}
+}
+
+func TestShareCreate(t *testing.T) {
+	ta := newTestApp(t)
+	ta.fake.Put("/f.txt", []byte("f"), 1)
+	code, doc := ta.json(t, "share", "create", "-p", "abcd", "/f.txt")
+	if code != 0 || doc["pwd"] != "abcd" || !strings.HasSuffix(doc["url"].(string), "?pwd=abcd") {
+		t.Errorf("%d %v", code, doc)
+	}
+	if code, _ := ta.json(t, "share", "create", "/nope"); code != 2 {
+		t.Errorf("share of a missing path: %d", code)
 	}
 }

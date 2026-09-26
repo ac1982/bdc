@@ -25,7 +25,7 @@ func (c *Client) Recycled(ctx context.Context) ([]Deleted, error) {
 			} `json:"list"`
 		}
 		q := url.Values{"num": {strconv.Itoa(pageSize)}, "page": {strconv.Itoa(page)}}
-		if err := c.do(ctx, &request{op: "列出回收站", url: panBase + "api/recycle/list?" + q.Encode(), ua: uaNetdisk}, &resp); err != nil {
+		if err := c.do(ctx, &request{op: "列出回收站", path: "api/recycle/list/", query: q}, &resp); err != nil {
 			return all, err
 		}
 		for _, r := range resp.List {
@@ -39,20 +39,17 @@ func (c *Client) Recycled(ctx context.Context) ([]Deleted, error) {
 
 // Restore moves files from the recycle bin back to where they were.
 func (c *Client) Restore(ctx context.Context, fsIDs ...int64) error {
-	list := make([]map[string]int64, len(fsIDs))
-	for i, id := range fsIDs {
-		list[i] = map[string]int64{"fs_id": id}
-	}
-	return c.do(ctx, &request{op: "还原", url: pcsURL("file", "restore", nil), param: map[string]any{"list": list}}, nil)
+	return c.recycle(ctx, "restore", "还原", fsIDs)
 }
 
-// Purge deletes files from the recycle bin for good.
+// Purge deletes files from the recycle bin for good. Baidu may demand a
+// security check (errno 132) that only the web page or the app can pass.
 func (c *Client) Purge(ctx context.Context, fsIDs ...int64) error {
-	list, _ := json.Marshal(fsIDs)
-	return c.do(ctx, &request{op: "彻底删除", url: panBase + "api/recycle/delete", form: url.Values{"fidlist": {string(list)}}, ua: uaNetdisk}, nil)
+	return c.recycle(ctx, "delete", "彻底删除", fsIDs)
 }
 
-// EmptyRecycleBin deletes everything in the recycle bin for good.
-func (c *Client) EmptyRecycleBin(ctx context.Context) error {
-	return c.do(ctx, &request{op: "清空回收站", url: pcsURL("file", "delete", url.Values{"type": {"recycle"}})}, nil)
+func (c *Client) recycle(ctx context.Context, action, op string, fsIDs []int64) error {
+	list, _ := json.Marshal(fsIDs)
+	return c.do(ctx, &request{op: op, path: "api/recycle/" + action, query: url.Values{"channel": {"chunlei"}, "async": {"1"}},
+		write: true, form: url.Values{"fidlist": {string(list)}}}, nil)
 }

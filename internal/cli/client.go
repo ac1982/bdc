@@ -11,9 +11,9 @@ import (
 // newClient builds the Baidu client for an account, honouring the proxy
 // setting and, in tests, the recording transport. A non-nil rt replaces the
 // network (unit tests use a fake Baidu).
-func newClient(s config.Settings, cookies string, uid uint64, rt http.RoundTripper) (*baidu.Client, error) {
+func newClient(s config.Settings, cookies string, rt http.RoundTripper) (*baidu.Client, error) {
 	if rt != nil {
-		return baidu.New(&http.Client{Transport: rt}, cookies, uid)
+		return baidu.New(&http.Client{Transport: rt}, cookies)
 	}
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.MaxIdleConnsPerHost = 16
@@ -24,5 +24,5 @@ func newClient(s config.Settings, cookies string, uid uint64, rt http.RoundTripp
 		}
 		tr.Proxy = http.ProxyURL(u)
 	}
-	return baidu.New(&http.Client{Transport: cassetteTransport(tr)}, cookies, uid)
+	return baidu.New(&http.Client{Transport: cassetteTransport(tr)}, cookies)
 }

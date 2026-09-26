@@ -16,7 +16,7 @@ const EnvDir = "BDC_CONFIG_DIR"
 // Config is the whole file. Accounts hold login cookies; Settings never do,
 // so Settings alone is safe to print.
 type Config struct {
-	Active   uint64    `json:"active,omitempty"`
+	Active   int64     `json:"active,omitempty"` // UK of the current account
 	Accounts []Account `json:"accounts"`
 	Settings Settings  `json:"settings"`
 
@@ -25,7 +25,7 @@ type Config struct {
 
 // Account is one logged-in Baidu user.
 type Account struct {
-	UID     uint64 `json:"uid"`
+	UK      int64  `json:"uk"` // the user's netdisk key
 	Name    string `json:"name"`
 	Cookies string `json:"cookies"`
 	Workdir string `json:"workdir"`
@@ -105,7 +105,7 @@ func (c *Config) Path() string { return c.path }
 // Current returns the active account, or nil when nobody is logged in.
 func (c *Config) Current() *Account {
 	for i := range c.Accounts {
-		if c.Accounts[i].UID == c.Active {
+		if c.Accounts[i].UK == c.Active {
 			return &c.Accounts[i]
 		}
 	}
@@ -114,9 +114,9 @@ func (c *Config) Current() *Account {
 
 // Put adds or replaces an account and makes it active.
 func (c *Config) Put(a Account) {
-	c.Active = a.UID
+	c.Active = a.UK
 	for i := range c.Accounts {
-		if c.Accounts[i].UID == a.UID {
+		if c.Accounts[i].UK == a.UK {
 			if a.Workdir == "" {
 				a.Workdir = c.Accounts[i].Workdir
 			}
@@ -131,17 +131,17 @@ func (c *Config) Put(a Account) {
 }
 
 // Remove deletes the account; if it was active, another one (if any) takes over.
-func (c *Config) Remove(uid uint64) {
+func (c *Config) Remove(uk int64) {
 	for i := range c.Accounts {
-		if c.Accounts[i].UID == uid {
+		if c.Accounts[i].UK == uk {
 			c.Accounts = append(c.Accounts[:i], c.Accounts[i+1:]...)
 			break
 		}
 	}
-	if c.Active == uid {
+	if c.Active == uk {
 		c.Active = 0
 		if len(c.Accounts) > 0 {
-			c.Active = c.Accounts[0].UID
+			c.Active = c.Accounts[0].UK
 		}
 	}
 }

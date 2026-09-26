@@ -473,7 +473,8 @@ func (rn renamer) run(app *App, args []string) (Result, error) {
 	dst := app.abs(args[len(args)-1]) // the target is a name, never a pattern
 	into := len(srcs) > 1 || strings.HasSuffix(args[len(args)-1], "/")
 	if rn.move && len(srcs) == 1 && srcs[0] != dst && remoteKey(srcs[0]) == remoteKey(dst) {
-		return rn.caseOnly(app, client, srcs[0], dst)
+		// Only the case changes: Baidu ignores case, so dst "exists" as the source itself.
+		return rn.renameInPlace(app, client, srcs[0], dst)
 	}
 	if f, err := client.Meta(app.ctx, dst); err == nil {
 		if !f.IsDir {
@@ -482,6 +483,9 @@ func (rn renamer) run(app *App, args []string) (Result, error) {
 		into = true
 	} else if !errors.Is(err, baidu.ErrNotFound) {
 		return nil, err
+	}
+	if rn.move && !into && path.Dir(srcs[0]) == path.Dir(dst) {
+		return rn.renameInPlace(app, client, srcs[0], dst)
 	}
 
 	r := renameResult{Items: []baidu.Rename{}, verb: rn.verb}
@@ -502,16 +506,11 @@ func (rn renamer) run(app *App, args []string) (Result, error) {
 	return r, err
 }
 
-// caseOnly renames a to A. Baidu ignores case, so it sees A as taken by a
-// itself; the rename goes by way of a temporary name.
-func (rn renamer) caseOnly(app *App, client *baidu.Client, src, dst string) (Result, error) {
-	tmp := dst + ".bdc-rename"
-	if _, err := client.Move(app.ctx, baidu.Rename{From: src, To: tmp}); err != nil {
+// renameInPlace gives a file a new name in its directory, as the web app's
+// rename does (a move cannot change only the case of a name).
+func (rn renamer) renameInPlace(app *App, client *baidu.Client, src, dst string) (Result, error) {
+	if err := client.RenameInPlace(app.ctx, src, path.Base(dst)); err != nil {
 		return nil, err
-	}
-	if _, err := client.Move(app.ctx, baidu.Rename{From: tmp, To: dst}); err != nil {
-		// Half done: report where the file is now.
-		return renameResult{Items: []baidu.Rename{{From: src, To: tmp}}, verb: rn.verb}, err
 	}
 	return renameResult{Items: []baidu.Rename{{From: src, To: dst}}, verb: rn.verb}, nil
 }

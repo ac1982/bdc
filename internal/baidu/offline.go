@@ -42,10 +42,14 @@ func (r rawTask) task() OfflineTask {
 		Size: int64(r.FileSize), Done: int64(r.Finished), Created: time.Unix(int64(r.CreateTime), 0)}
 }
 
-func cloudDL(method string, q url.Values) string {
+// cloudDL is a request to the offline download service, as the web app sends it.
+func cloudDL(op, method string, q url.Values, form url.Values) *request {
+	if q == nil {
+		q = url.Values{}
+	}
 	q.Set("method", method)
-	q.Set("app_id", "250528")
-	return panBase + "rest/2.0/services/cloud_dl?" + q.Encode()
+	q.Set("t", strconv.FormatInt(time.Now().UnixMilli(), 10))
+	return &request{op: op, path: "rest/2.0/services/cloud_dl", query: q, write: true, form: form}
 }
 
 // AddOfflineTask asks Baidu to download source (http, https, magnet or ed2k) into dir.
@@ -53,8 +57,8 @@ func (c *Client) AddOfflineTask(ctx context.Context, source, dir string) (int64,
 	var resp struct {
 		TaskID flexInt `json:"task_id"`
 	}
-	q := url.Values{"source_url": {source}, "save_path": {dir}, "task_from": {"0"}, "selected_idx": {"1"}}
-	err := c.do(ctx, &request{op: "添加离线下载 " + source, method: "POST", url: cloudDL("add_task", q)}, &resp)
+	form := url.Values{"source_url": {source}, "save_path": {dir}, "type": {"3"}}
+	err := c.do(ctx, cloudDL("添加离线下载 "+source, "add_task", nil, form), &resp)
 	return int64(resp.TaskID), err
 }
 
@@ -64,7 +68,7 @@ func (c *Client) OfflineTasks(ctx context.Context) ([]OfflineTask, error) {
 		Tasks []rawTask `json:"task_info"`
 	}
 	q := url.Values{"need_task_info": {"1"}, "status": {"255"}, "start": {"0"}, "limit": {"1000"}}
-	if err := c.do(ctx, &request{op: "列出离线下载", method: "POST", url: cloudDL("list_task", q)}, &resp); err != nil {
+	if err := c.do(ctx, cloudDL("列出离线下载", "list_task", q, nil), &resp); err != nil {
 		return nil, err
 	}
 	tasks := make([]OfflineTask, len(resp.Tasks))
@@ -84,13 +88,13 @@ func (c *Client) OfflineTasksByID(ctx context.Context, ids ...int64) ([]OfflineT
 		Tasks map[string]rawTask `json:"task_info"`
 	}
 	q := url.Values{"op_type": {"1"}, "task_ids": {strings.Join(s, ",")}}
-	if err := c.do(ctx, &request{op: "查询离线下载", url: cloudDL("query_task", q)}, &resp); err != nil {
+	if err := c.do(ctx, cloudDL("查询离线下载", "query_task", q, nil), &resp); err != nil {
 		return nil, err
 	}
 	var tasks []OfflineTask
-	for _, id := range s {
+	for i, id := range s {
 		if r, ok := resp.Tasks[id]; ok {
-			r.ID = flexInt(mustAtoi(id))
+			r.ID = flexInt(ids[i])
 			tasks = append(tasks, r.task())
 		}
 	}
@@ -99,22 +103,10 @@ func (c *Client) OfflineTasksByID(ctx context.Context, ids ...int64) ([]OfflineT
 
 // CancelOfflineTask stops a running task.
 func (c *Client) CancelOfflineTask(ctx context.Context, id int64) error {
-	q := url.Values{"task_id": {strconv.FormatInt(id, 10)}}
-	return c.do(ctx, &request{op: "取消离线下载", method: "POST", url: cloudDL("cancel_task", q)}, nil)
+	return c.do(ctx, cloudDL("取消离线下载", "cancel_task", nil, url.Values{"task_id": {strconv.FormatInt(id, 10)}}), nil)
 }
 
 // DeleteOfflineTask removes a task from the list.
 func (c *Client) DeleteOfflineTask(ctx context.Context, id int64) error {
-	q := url.Values{"task_id": {strconv.FormatInt(id, 10)}}
-	return c.do(ctx, &request{op: "删除离线下载", method: "POST", url: cloudDL("delete_task", q)}, nil)
-}
-
-// ClearOfflineTasks removes all finished and failed tasks from the list.
-func (c *Client) ClearOfflineTasks(ctx context.Context) error {
-	return c.do(ctx, &request{op: "清空离线下载", method: "POST", url: cloudDL("clear_task", url.Values{})}, nil)
-}
-
-func mustAtoi(s string) int64 {
-	n, _ := strconv.ParseInt(s, 10, 64)
-	return n
+	return c.do(ctx, cloudDL("删除离线下载", "delete_task", nil, url.Values{"task_id": {strconv.FormatInt(id, 10)}}), nil)
 }

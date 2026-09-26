@@ -23,10 +23,14 @@ type fakeUploader struct {
 	created  []byte
 }
 
-func (f *fakeUploader) Precreate(_ context.Context, p string, h baidu.Hashes, _ io.ReaderAt, _ bool, resume string) (baidu.Upload, error) {
+func (f *fakeUploader) RapidUpload(_ context.Context, p string, h baidu.Hashes, _ io.ReaderAt, _ bool) (*baidu.File, error) {
 	if f.rapid {
-		return baidu.Upload{Rapid: &baidu.File{Path: p, Size: h.Size}}, nil
+		return &baidu.File{Path: p, Size: h.Size}, nil
 	}
+	return nil, nil
+}
+
+func (f *fakeUploader) Precreate(_ context.Context, p string, h baidu.Hashes, _ bool, resume string) (baidu.Upload, error) {
 	if resume != "" {
 		return baidu.Upload{ID: resume}, nil
 	}
@@ -35,7 +39,7 @@ func (f *fakeUploader) Precreate(_ context.Context, p string, h baidu.Hashes, _ 
 
 func (f *fakeUploader) UploadHost(context.Context) (string, error) { return "host", nil }
 
-func (f *fakeUploader) UploadBlock(_ context.Context, _, _ string, _ baidu.Upload, seq int, _ int64, data []byte) (string, error) {
+func (f *fakeUploader) UploadBlock(_ context.Context, _, _ string, _ baidu.Upload, seq int, data []byte) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.uploads++

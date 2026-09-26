@@ -184,9 +184,9 @@ func (a *App) baidu() (*baidu.Client, error) {
 		return nil, err
 	}
 	// Rebuild when the login or the proxy changed, e.g. after login or config set in the shell.
-	key := fmt.Sprint(acc.UID, "\x00", acc.Cookies, "\x00", a.cfg.Settings.Proxy)
+	key := fmt.Sprint(acc.UK, "\x00", acc.Cookies, "\x00", a.cfg.Settings.Proxy)
 	if a.client == nil || a.clientKey != key {
-		c, err := newClient(a.cfg.Settings, acc.Cookies, acc.UID, a.transport)
+		c, err := newClient(a.cfg.Settings, acc.Cookies, a.transport)
 		if err != nil {
 			return nil, err
 		}

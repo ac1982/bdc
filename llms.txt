@@ -34,21 +34,21 @@
 - `md5` is present only when it is the file's real content md5. Baidu does not know it for files stored in several blocks (typically those uploaded in 4 MiB pieces), so those have no `md5`.
 - `mkdir` of a directory that already exists succeeds (`existing[]`), so it is safe to repeat.
 - `cp`/`mv <src…> <dst>`: if `dst` is an existing directory, sources go into it; otherwise one source is copied/renamed to `dst`, several go into a new directory `dst`. `items[]` lists each `{from, to}`.
-- `rm` moves to the recycle bin: `bdc recycle list --json` (`files[].fsId`, `daysLeft`), `bdc recycle restore <fsId…>`, `bdc recycle delete -y <fsId…>` (permanent).
+- `rm` moves to the recycle bin: `bdc recycle list --json` (`files[].fsId`, `daysLeft`), `bdc recycle restore <fsId…>`, `bdc recycle delete -y <fsId…>` (permanent; Baidu usually demands a security check there, exit 4 with code 132: ask the user to verify on the web or phone).
 - Downloads: `-o <dir>` (default: the `save-dir` setting). A directory downloads recursively into `<dir>/<its name>/…`; `--full-path` keeps the whole netdisk path. A file already on disk is `{"status": "skipped", "reason": "exists"}`; `--overwrite` replaces it. Interrupted downloads resume (a `.bdc-part` file sits beside the target meanwhile).
 - Uploads: the last argument is the netdisk directory; the others are local files or directories (uploaded recursively as `<dir>/<name>/…`). If the target exists: `--policy skip` (default) → `skipped`/`exists`; `overwrite` replaces; `rsync` replaces unless the size is the same (`skipped`/`same-size`). `status: "rapid"` means Baidu already had the content and nothing was sent. Interrupted uploads resume.
 - `files[].status` in transfers: `downloaded`, `uploaded`, `rapid`, `skipped` (`reason`: `exists`, `same-size`, `symlink` for a symlinked local directory, which is not followed), `failed` (with `error`); `summary` counts them. A path that cannot be read, or two files that would land on the same target, fail on their own while the rest still transfers. If any file failed the command fails, but the document lists every file.
-- Shares: `bdc share create --json [-p <4 chars>] [--days n, 0 = forever] <path…>` → `shareId`, `link`, `pwd`, `url` (link with `?pwd=`). `bdc share save --json "<link>" [<code>] [--to <dir>]` saves someone else's share into the working directory (or `--to`); the code may be in the link. Saving your own share fails (Baidu: 文件已存在, code 2). `bdc share cancel <shareId…>`.
+- Shares: `bdc share create --json [-p <4 chars>] [--days n, 0 = forever] <path…>` → `shareId`, `link`, `pwd`, `url` (link with `?pwd=`). `bdc share save --json "<link>" [<code>] [--to <dir>]` saves someone else's share into the working directory (or `--to`, created if missing); the code may be in the link. Saving the same share again fails with code 4 (already saved). Saving your own share fails (Baidu: 文件已存在, code 2). `bdc share cancel <shareId…>`.
 - Offline downloads run on Baidu's servers: `bdc offline add --json --to <dir> <url…>` → `ids`; poll `bdc offline list --json <id…>` (`status` 0 = done, 1 = running).
-- `logout`, `recycle delete`, `recycle clear` and `update` need `-y` without a terminal. With no command and no terminal, bdc exits 64 instead of opening the shell.
+- `logout`, `recycle delete` and `update` need `-y` without a terminal. With no command and no terminal, bdc exits 64 instead of opening the shell.
 
 ## Command map
 
 ```text
-Account   login · logout -y · who · users · su <uid|name> · quota
+Account   login · logout -y · who · users · su <uk|name> · quota
 Browse    ls [-l] [--sort name|size|time] [--desc] · tree [--depth n] · meta · search [-r] [--path dir] · cd · pwd
-Manage    mkdir · rm · cp · mv · recycle list|restore|delete|clear
-Transfer  download [-o dir] [-p conns] [--overwrite] [--full-path] · upload [--policy skip|overwrite|rsync] · offline add|list|cancel|delete|clear
+Manage    mkdir · rm · cp · mv · recycle list|restore|delete
+Transfer  download [-o dir] [-p conns] [--overwrite] [--full-path] · upload [--policy skip|overwrite|rsync] · offline add|list|cancel|delete
 Share     share create|list|cancel|save
 Other     config [set …|reset] · update [--check] [-y]
 ```

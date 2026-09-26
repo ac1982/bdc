@@ -1,6 +1,7 @@
-// Package baidu is a client for the Baidu Netdisk API: one method per
+// Package baidu is a client for Baidu Netdisk, speaking the API of its web
+// client (pan.baidu.com in a browser) as that client does: one method per
 // endpoint, typed results and typed errors. It never prints and keeps no
-// global state.
+// global state. The protocol is written up in docs/baidu-api.md.
 package baidu
 
 import (
@@ -10,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -22,51 +22,42 @@ import (
 	"github.com/cenkalti/backoff/v5"
 )
 
-// User agents Baidu expects. PCS endpoints want none at all.
+// The web client's identity: a desktop browser on the netdisk web app.
 const (
-	uaNetdisk = "netdisk;P2SP;3.0.0.8;netdisk;11.12.3;ANG-AN00;android-android;10.0;JSbridge4.4.0;jointBridge;1.1.0;"
-	uaBrowser = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-	uaNone    = ""
-)
-
-const (
-	pcsBase = "https://pcs.baidu.com/rest/2.0/pcs/"
-	panBase = "https://pan.baidu.com/"
+	userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
+	panBase   = "https://pan.baidu.com/"
+	webApp    = panBase + "disk/main" // the Referer of the app's API calls
 )
 
 // Client talks to Baidu as one logged-in user.
 type Client struct {
-	UID uint64 // Baidu user id; needed to sign download requests
+	http *http.Client
 
-	http  *http.Client
-	bduss string
-
-	mu sync.Mutex
-	uk int64 // cached by UK
+	mu       sync.Mutex
+	bdstoken string // the web app's token for changes; see token
 }
 
 // New returns a client that authenticates with cookies ("BDUSS=…; STOKEN=…; …").
 // The http client may be nil; its Jar is replaced.
-func New(hc *http.Client, cookies string, uid uint64) (*Client, error) {
+func New(hc *http.Client, cookies string) (*Client, error) {
 	inner, _ := cookiejar.New(nil)
 	jar := newestJar{inner}
 	parsed, err := http.ParseCookie(cookies)
 	if err != nil {
 		return nil, fmt.Errorf("无法解析 Cookie: %w", err)
 	}
-	c := &Client{UID: uid, http: &http.Client{}}
+	c := &Client{http: &http.Client{}}
 	if hc != nil {
 		*c.http = *hc
 	}
 	c.http.Jar = jar
+	hasBDUSS := false
 	for _, ck := range parsed {
-		if ck.Name == "BDUSS" {
-			c.bduss = ck.Value
-		}
+		hasBDUSS = hasBDUSS || ck.Name == "BDUSS"
 		// Secure: the login never travels over plain HTTP.
 		ck.Domain, ck.Path, ck.Secure = ".baidu.com", "/", true
 	}
-	if c.bduss == "" {
+	if !hasBDUSS {
 		return nil, &Error{Op: "登录", Message: "Cookie 中没有 BDUSS", Err: ErrInvalid}
 	}
 	jar.SetCookies(&url.URL{Scheme: "https", Host: "baidu.com"}, parsed)
@@ -97,27 +88,69 @@ func (j newestJar) Cookies(u *url.URL) []*http.Cookie {
 // HTTP is the underlying client, cookies included, for transferring file data.
 func (c *Client) HTTP() *http.Client { return c.http }
 
+// cookie returns the value of a cookie the jar sends to pan.baidu.com.
+func (c *Client) cookie(name string) string {
+	for _, ck := range c.http.Jar.Cookies(&url.URL{Scheme: "https", Host: "pan.baidu.com", Path: "/"}) {
+		if ck.Name == name {
+			return ck.Value
+		}
+	}
+	return ""
+}
+
 // request describes one API call.
 type request struct {
 	op     string     // for error messages, e.g. "删除 /a"
 	method string     // GET unless a body is given
-	url    string     // full URL including the query
+	path   string     // relative to pan.baidu.com, e.g. "api/list", or a full URL
+	query  url.Values // pan paths also get the web app's common parameters
+	write  bool       // a change: the query carries the bdstoken, as the web app's do
 	form   url.Values // x-www-form-urlencoded body
-	param  any        // PCS batch endpoints: JSON in the multipart field "param"
 	body   []byte     // any other body, of type ctype
 	ctype  string
-	ua     string
-	header http.Header
-	raw    bool // out is *[]byte: return the body as is, no error decoding
-	once   bool // do not retry, even a GET
+	header http.Header // added to (or replacing) the default headers
+	raw    bool        // out is *[]byte: return the body as is, no error decoding
+	once   bool        // do not retry, even a GET
+}
+
+// url is the request's full URL.
+func (c *Client) url(ctx context.Context, r *request) (string, error) {
+	q := url.Values{}
+	for k, v := range r.query {
+		q[k] = v
+	}
+	base := r.path
+	if !strings.HasPrefix(base, "https://") {
+		base = panBase + r.path
+		for k, v := range map[string]string{"clienttype": "0", "app_id": "250528", "web": "1"} {
+			if !q.Has(k) {
+				q.Set(k, v)
+			}
+		}
+	}
+	if r.write {
+		token, err := c.token(ctx)
+		if err != nil {
+			return "", err
+		}
+		q.Set("bdstoken", token)
+	}
+	if len(q) == 0 {
+		return base, nil
+	}
+	return base + "?" + q.Encode(), nil
 }
 
 // do sends req and decodes the JSON response into out (which may be nil).
 // Transient failures of idempotent requests are retried.
 func (c *Client) do(ctx context.Context, req *request, out any) error {
-	body, ctype, err := req.encode()
+	u, err := c.url(ctx, req)
 	if err != nil {
-		return &Error{Op: req.op, Err: err}
+		return err
+	}
+	body, ctype := req.body, req.ctype
+	if req.form != nil {
+		body, ctype = []byte(req.form.Encode()), "application/x-www-form-urlencoded; charset=UTF-8"
 	}
 	method := req.method
 	if method == "" {
@@ -135,16 +168,21 @@ func (c *Client) do(ctx context.Context, req *request, out any) error {
 		if body != nil {
 			rd = bytes.NewReader(body)
 		}
-		hr, err := http.NewRequestWithContext(ctx, method, req.url, rd)
+		hr, err := http.NewRequestWithContext(ctx, method, u, rd)
 		if err != nil {
 			return response{}, backoff.Permanent(err)
 		}
-		for k, v := range req.header {
-			hr.Header[k] = v
+		hr.Header.Set("User-Agent", userAgent)
+		hr.Header.Set("Referer", webApp)
+		hr.Header.Set("X-Requested-With", "XMLHttpRequest")
+		if body != nil {
+			hr.Header.Set("Origin", "https://pan.baidu.com")
 		}
-		hr.Header.Set("User-Agent", req.ua)
 		if ctype != "" {
 			hr.Header.Set("Content-Type", ctype)
+		}
+		for k, v := range req.header {
+			hr.Header[k] = v
 		}
 		resp, err := c.http.Do(hr)
 		if err != nil {
@@ -186,14 +224,42 @@ func (c *Client) do(ctx context.Context, req *request, out any) error {
 	return decode(req.op, resp.status, resp.body, out)
 }
 
+// vars reads the web app's template variables (token, uk, user name, the
+// download signature's inputs, …).
+func (c *Client) vars(ctx context.Context, fields ...string) (map[string]json.RawMessage, error) {
+	f, _ := json.Marshal(fields)
+	var resp struct {
+		Result map[string]json.RawMessage `json:"result"`
+	}
+	err := c.do(ctx, &request{op: "获取帐号信息", path: "api/gettemplatevariable", query: url.Values{"fields": {string(f)}}}, &resp)
+	return resp.Result, err
+}
+
+// token is the bdstoken every change carries, fetched once.
+func (c *Client) token(ctx context.Context) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.bdstoken != "" {
+		return c.bdstoken, nil
+	}
+	v, err := c.vars(ctx, "bdstoken")
+	if err != nil {
+		return "", err
+	}
+	if json.Unmarshal(v["bdstoken"], &c.bdstoken) != nil || c.bdstoken == "" {
+		return "", &Error{Op: "获取帐号信息", Message: "没有得到 bdstoken", Err: ErrAuth}
+	}
+	return c.bdstoken, nil
+}
+
 // decode turns a response into out or an error: Baidu's own error codes
-// first (PCS error_code, pan errno, and per-item errors of batch calls), then
-// the HTTP status, since a failed call may carry no code at all.
+// first (error_code, errno, and per-item errors of batch calls), then the
+// HTTP status, since a failed call may carry no code at all.
 func decode(op string, status int, data []byte, out any) error {
 	var st struct {
-		ErrorCode flexInt         `json:"error_code"` // PCS; tieba sends it as a string
+		ErrorCode flexInt         `json:"error_code"`
 		ErrorMsg  string          `json:"error_msg"`
-		Errno     flexInt         `json:"errno"` // pan
+		Errno     flexInt         `json:"errno"`
 		ShowMsg   string          `json:"show_msg"`
 		ErrMsg    string          `json:"errmsg"`
 		Info      json.RawMessage `json:"info"` // per item in batch calls; other shapes elsewhere
@@ -235,38 +301,6 @@ func decode(op string, status int, data []byte, out any) error {
 	return nil
 }
 
-func (r *request) encode() (body []byte, ctype string, err error) {
-	switch {
-	case r.body != nil:
-		return r.body, r.ctype, nil
-	case r.form != nil:
-		return []byte(r.form.Encode()), "application/x-www-form-urlencoded", nil
-	case r.param != nil:
-		p, err := json.Marshal(r.param)
-		if err != nil {
-			return nil, "", err
-		}
-		var buf bytes.Buffer
-		w := multipart.NewWriter(&buf)
-		w.WriteField("param", string(p))
-		w.Close()
-		return buf.Bytes(), w.FormDataContentType(), nil
-	}
-	return nil, "", nil
-}
-
-// pcsURL builds a PCS REST URL: pcs.baidu.com/rest/2.0/pcs/<path>?method=…&app_id=….
-func pcsURL(path, method string, q url.Values) string {
-	if q == nil {
-		q = url.Values{}
-	}
-	q.Set("method", method)
-	if q.Get("app_id") == "" {
-		q.Set("app_id", "266719")
-	}
-	return pcsBase + path + "?" + q.Encode()
-}
-
 // flexInt decodes a JSON number or a numeric string.
 type flexInt int64
 
@@ -280,6 +314,8 @@ func (n *flexInt) UnmarshalJSON(b []byte) error {
 	*n = flexInt(v)
 	return err
 }
+
+func (n flexInt) String() string { return strconv.FormatInt(int64(n), 10) }
 
 func firstNonEmpty(s ...string) string {
 	for _, v := range s {

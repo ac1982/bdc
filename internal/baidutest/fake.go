@@ -1,15 +1,17 @@
-// Package baidutest is an in-memory Baidu Netdisk that speaks the endpoints
-// bdc uses, for tests that must run anywhere (CI has no account and no
-// recordings). Where it models something, it does so the way the real
+// Package baidutest is an in-memory Baidu Netdisk that speaks the web app's
+// API as bdc uses it, for tests that must run anywhere (CI has no account and
+// no recordings). Where it models something, it does so the way the real
 // service was observed to behave (docs/baidu-api.md): paths ignore case,
-// listings are paged, long URLs are refused, a bad login is errno -6, a
-// failed batch item is errno 12 with the item's code. Endpoints it does not
-// model fail loudly.
+// listings are paged, long URLs are refused, changes need the bdstoken, a bad
+// login is errno -6, a failed batch item is errno 12 with the item's code.
+// Endpoints it does not model fail loudly.
 package baidutest
 
 import (
 	"bytes"
 	"crypto/md5"
+	"crypto/rc4"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -27,21 +29,28 @@ import (
 // Cookies log in to the fake; any other BDUSS is rejected.
 const Cookies = "BDUSS=fake-bduss; STOKEN=fake-stoken"
 
-// UID and Name are the fake user's.
+// UK and Name are the fake user's.
 const (
-	UID  = 42
+	UK   = 42
 	Name = "tester"
 )
 
 // MaxURL is the longest request URL the fake accepts, like Baidu's servers.
 const MaxURL = 8192
 
+const (
+	token        = "fake-token"
+	sign1, sign3 = "fake-sign1", "fake-sign3"
+)
+
 // Fake is the netdisk.
 type Fake struct {
-	mu     sync.Mutex
-	nodes  map[string]*node // by key(path)
-	nextID int64
-	blocks map[string][]byte // uploaded blocks by md5
+	mu      sync.Mutex
+	nodes   map[string]*node // by key(path)
+	nextID  int64
+	blocks  map[string][]byte // uploaded blocks by md5
+	recycle map[int64][]*node // removed subtrees by the fs_id of their top
+	tasks   map[int64]string  // offline tasks: id → source URL
 
 	// Requests counts requests by "host/path?method".
 	Requests map[string]int
@@ -64,7 +73,8 @@ func key(p string) string { return strings.ToLower(p) }
 
 // New returns an empty netdisk (just "/").
 func New() *Fake {
-	f := &Fake{nodes: map[string]*node{}, blocks: map[string][]byte{}, Requests: map[string]int{}}
+	f := &Fake{nodes: map[string]*node{}, blocks: map[string][]byte{}, recycle: map[int64][]*node{},
+		tasks: map[int64]string{}, Requests: map[string]int{}}
 	f.nodes["/"] = &node{path: "/", dir: true}
 	return f
 }
@@ -114,6 +124,16 @@ func (f *Fake) Exists(p string) bool {
 	return f.nodes[key(p)] != nil
 }
 
+// Name returns the stored name of a path, with its case.
+func (f *Fake) Name(p string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if n := f.nodes[key(p)]; n != nil {
+		return path.Base(n.path)
+	}
+	return ""
+}
+
 func (f *Fake) id() int64 { f.nextID++; return 1000 + f.nextID }
 
 func (f *Fake) mkdirAll(p string) {
@@ -122,37 +142,51 @@ func (f *Fake) mkdirAll(p string) {
 	}
 }
 
+// endpoint is a modelled API; write marks those that need the bdstoken.
+type endpoint struct {
+	handle func(http.ResponseWriter, *http.Request)
+	write  bool
+}
+
 // endpoints the fake models, by "host/path" or "host/path?method".
-func (f *Fake) endpoints() map[string]func(http.ResponseWriter, *http.Request) {
-	return map[string]func(http.ResponseWriter, *http.Request){
-		"tieba.baidu.com/c/s/login": func(w http.ResponseWriter, r *http.Request) {
-			reply(w, map[string]any{"error_code": "0", "user": map[string]any{"id": strconv.Itoa(UID), "name": Name}})
-		},
-		"pan.baidu.com/api/user/getinfo": func(w http.ResponseWriter, r *http.Request) {
-			reply(w, map[string]any{"errno": 0, "records": []any{map[string]any{"uk": 7}}})
-		},
-		"pan.baidu.com/api/quota": func(w http.ResponseWriter, r *http.Request) {
+func (f *Fake) endpoints() map[string]endpoint {
+	return map[string]endpoint{
+		"pan.baidu.com/api/gettemplatevariable": {handle: f.vars},
+		"pan.baidu.com/api/quota": {handle: func(w http.ResponseWriter, r *http.Request) {
 			reply(w, map[string]any{"errno": 0, "total": 1 << 40, "used": 1 << 30})
-		},
-		"pan.baidu.com/api/list":                 f.list,
-		"pan.baidu.com/api/filemetas":            f.metas,
-		"pan.baidu.com/api/search":               f.search,
-		"pan.baidu.com/api/create":               f.create,
-		"pan.baidu.com/api/filemanager":          f.fileManager,
-		"pcs.baidu.com/rest/2.0/pcs/file?delete": f.pcsDelete,
-		"pan.baidu.com/api/precreate": func(w http.ResponseWriter, r *http.Request) {
+		}},
+		"pan.baidu.com/api/list":        {handle: f.list},
+		"pan.baidu.com/api/filemetas":   {handle: f.metas},
+		"pan.baidu.com/api/search":      {handle: f.search},
+		"pan.baidu.com/api/create":      {handle: f.create, write: true},
+		"pan.baidu.com/api/filemanager": {handle: f.fileManager, write: true},
+		"pan.baidu.com/api/rapidupload": {handle: f.rapidUpload, write: true},
+		"pan.baidu.com/api/precreate": {write: true, handle: func(w http.ResponseWriter, r *http.Request) {
 			reply(w, map[string]any{"errno": 0, "return_type": 1, "uploadid": "up-" + r.Form.Get("path")})
-		},
-		"pcs.baidu.com/rest/2.0/pcs/file?locateupload": func(w http.ResponseWriter, r *http.Request) {
-			reply(w, map[string]any{"servers": []any{map[string]string{"server": "https://up-1.pcs.baidu.com"}}})
-		},
-		"up-1.pcs.baidu.com/rest/2.0/pcs/superfile2?upload": f.uploadBlock,
-		"pcs.baidu.com/rest/2.0/pcs/file?locatedownload":    f.locate,
-		"pan.baidu.com/share/pset": func(w http.ResponseWriter, r *http.Request) {
+		}},
+		"d.pcs.baidu.com/rest/2.0/pcs/file?locateupload": {handle: func(w http.ResponseWriter, r *http.Request) {
+			reply(w, map[string]any{"error_code": 0, "server": []string{"up-1.pcs.baidu.com"}})
+		}},
+		"up-1.pcs.baidu.com/rest/2.0/pcs/superfile2?upload": {handle: f.uploadBlock},
+		"pan.baidu.com/api/download":                        {handle: f.download},
+		"pan.baidu.com/share/pset": {write: true, handle: func(w http.ResponseWriter, r *http.Request) {
 			id := f.id()
 			reply(w, map[string]any{"errno": 0, "shareid": id, "link": fmt.Sprintf("https://pan.baidu.com/s/1fake%d", id)})
-		},
-		"pan.baidu.com/share/cancel": func(w http.ResponseWriter, r *http.Request) { reply(w, map[string]any{"errno": 0}) },
+		}},
+		"pan.baidu.com/share/cancel": {write: true, handle: func(w http.ResponseWriter, r *http.Request) {
+			reply(w, map[string]any{"errno": 0})
+		}},
+		"pan.baidu.com/share/record": {handle: func(w http.ResponseWriter, r *http.Request) {
+			reply(w, map[string]any{"errno": 0, "list": []any{}})
+		}},
+		"pan.baidu.com/api/recycle/list/":   {handle: f.recycleList},
+		"pan.baidu.com/api/recycle/restore": {handle: f.restore, write: true},
+		"pan.baidu.com/api/recycle/delete": {write: true, handle: func(w http.ResponseWriter, r *http.Request) {
+			reply(w, map[string]any{"errno": 132, "verify_scene": 2}) // as the real one answered, even the web app
+		}},
+		"pan.baidu.com/rest/2.0/services/cloud_dl?add_task":    {handle: f.addTask, write: true},
+		"pan.baidu.com/rest/2.0/services/cloud_dl?list_task":   {handle: f.listTasks, write: true},
+		"pan.baidu.com/rest/2.0/services/cloud_dl?delete_task": {handle: f.deleteTask, write: true},
 	}
 }
 
@@ -161,52 +195,70 @@ func (f *Fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "414 Request-URI Too Large", http.StatusRequestURITooLong)
 		return
 	}
-	r.ParseForm()
+	if r.URL.Host == "d.pcs.baidu.com" && strings.HasPrefix(r.URL.Path, "/file/") { // a download link
+		http.Redirect(w, r, "https://d1.baidupcs.com"+r.URL.RequestURI(), http.StatusFound)
+		return
+	}
+	if strings.HasSuffix(r.URL.Host, ".baidupcs.com") {
+		f.serveContent(w, r)
+		return
+	}
+	if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
+		r.ParseForm()
+	}
 	name := r.URL.Host + r.URL.Path
-	if m := r.Form.Get("method"); m != "" {
+	if m := r.URL.Query().Get("method"); m != "" {
 		name += "?" + m
 	}
 	f.mu.Lock()
 	f.Requests[name]++
+	calls := f.Requests[name]
 	f.mu.Unlock()
 
-	if strings.HasPrefix(r.URL.Path, "/file/") { // content behind a download link
-		f.serveContent(w, r)
-		return
-	}
-	handle, ok := f.endpoints()[name]
+	ep, ok := f.endpoints()[name]
 	switch {
 	case !ok:
 		http.Error(w, "baidutest: endpoint not modelled: "+name, http.StatusNotImplemented)
 	case r.URL.Scheme != "https":
 		http.Error(w, "plain http", http.StatusForbidden)
-	case !authorized(r) && r.URL.Host == "tieba.baidu.com":
-		reply(w, map[string]any{"error_code": "1", "error_msg": "用户未登录或登录失败"})
 	case !authorized(r):
 		reply(w, map[string]any{"errno": -6})
+	case ep.write && r.URL.Query().Get("bdstoken") != token:
+		reply(w, map[string]any{"errno": -6, "show_msg": "missing bdstoken"})
 	default:
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		if f.Fail != nil {
-			if v := f.Fail(name, f.Requests[name]); v != nil {
+			if v := f.Fail(name, calls); v != nil {
 				reply(w, v)
 				return
 			}
 		}
-		handle(w, r)
+		ep.handle(w, r)
 	}
 }
 
 func authorized(r *http.Request) bool {
-	if ck, err := r.Cookie("BDUSS"); err == nil && ck.Value == "fake-bduss" {
-		return true
-	}
-	return strings.Contains(r.Form.Get("bdusstoken"), "fake-bduss")
+	ck, err := r.Cookie("BDUSS")
+	return err == nil && ck.Value == "fake-bduss"
 }
 
 func reply(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
+}
+
+func (f *Fake) vars(w http.ResponseWriter, r *http.Request) {
+	var fields []string
+	json.Unmarshal([]byte(r.Form.Get("fields")), &fields)
+	all := map[string]any{"bdstoken": token, "uk": UK, "username": Name, "sign1": sign1, "sign3": sign3, "timestamp": 1700000000}
+	result := map[string]any{}
+	for _, k := range fields {
+		if v, ok := all[k]; ok {
+			result[k] = v
+		}
+	}
+	reply(w, map[string]any{"errno": 0, "result": result})
 }
 
 // raw is a file as the API sends it; list and search omit block_list.
@@ -216,15 +268,19 @@ func (f *Fake) raw(n *node, blocks bool) map[string]any {
 		"size": len(n.data), "server_ctime": 1700000000, "server_mtime": 1700000000,
 	}
 	if !n.dir {
-		sum := md5.Sum(n.data)
-		m["md5"] = hex.EncodeToString(sum[:]) // plain: the client accepts plain and obfuscated
+		m["md5"] = md5hex(n.data) // plain: the client accepts plain and obfuscated
 		if blocks && n.blocks == 1 {
-			m["block_list"] = []string{hex.EncodeToString(sum[:])}
+			m["block_list"] = []string{md5hex(n.data)}
 		} else if blocks {
 			m["block_list"] = slices.Repeat([]string{"0123456789abcdef0123456789abcdef"}, n.blocks)
 		}
 	}
 	return m
+}
+
+func md5hex(b []byte) string {
+	sum := md5.Sum(b)
+	return hex.EncodeToString(sum[:])
 }
 
 func b2i(b bool) int {
@@ -311,7 +367,7 @@ func (f *Fake) search(w http.ResponseWriter, r *http.Request) {
 // create makes a directory (isdir=1) or commits uploaded blocks as a file.
 func (f *Fake) create(w http.ResponseWriter, r *http.Request) {
 	p := r.Form.Get("path")
-	if f.nodes[key(p)] != nil && r.Form.Get("rtype") != "3" {
+	if f.nodes[key(p)] != nil && r.URL.Query().Get("rtype") != "3" && r.Form.Get("rtype") != "3" {
 		reply(w, map[string]any{"errno": -8})
 		return
 	}
@@ -332,62 +388,92 @@ func (f *Fake) create(w http.ResponseWriter, r *http.Request) {
 	reply(w, map[string]any{"errno": 0, "fs_id": n.id, "path": p, "size": len(data)})
 }
 
+// rapidUpload creates the file when some stored file has the content.
+func (f *Fake) rapidUpload(w http.ResponseWriter, r *http.Request) {
+	want := deobfuscate(r.Form.Get("content-md5"))
+	for _, n := range f.nodes {
+		if n.dir || md5hex(n.data) != want {
+			continue
+		}
+		p := r.Form.Get("path")
+		if f.nodes[key(p)] != nil && r.URL.Query().Get("rtype") != "3" {
+			reply(w, map[string]any{"errno": -8})
+			return
+		}
+		f.mkdirAll(path.Dir(p))
+		c := &node{path: p, id: f.id(), data: n.data, blocks: 1}
+		f.nodes[key(p)] = c
+		reply(w, map[string]any{"errno": 0, "info": map[string]any{"fs_id": c.id, "path": p, "size": len(c.data)}})
+		return
+	}
+	reply(w, map[string]any{"errno": 404})
+}
+
+// deobfuscate undoes the md5 obfuscation of Baidu's APIs (see the baidu package).
+func deobfuscate(raw string) string {
+	const digits = "0123456789abcdef"
+	if len(raw) != 32 || strings.ContainsRune(digits, rune(raw[9])) {
+		return raw
+	}
+	s := []byte(raw)
+	s[9] = digits[raw[9]-'g']
+	o := make([]byte, 32)
+	for i, c := range s {
+		o[i] = digits[strings.IndexByte(digits, c)^(i&15)]
+	}
+	return string(o[8:16]) + string(o[0:8]) + string(o[24:32]) + string(o[16:24])
+}
+
 func (f *Fake) uploadBlock(w http.ResponseWriter, r *http.Request) {
-	// The part has an empty filename, so read it raw rather than as a form file.
 	mr, err := r.MultipartReader()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	part, err := mr.NextPart()
-	if err != nil || part.FormName() != "uploadedfile" {
-		http.Error(w, "no uploadedfile", http.StatusBadRequest)
+	if err != nil || part.FormName() != "file" {
+		http.Error(w, "no file part", http.StatusBadRequest)
 		return
 	}
 	data, _ := io.ReadAll(part)
-	sum := md5.Sum(data)
-	f.blocks[hex.EncodeToString(sum[:])] = data
-	reply(w, map[string]any{"md5": hex.EncodeToString(sum[:])})
+	f.blocks[md5hex(data)] = data
+	reply(w, map[string]any{"md5": md5hex(data)})
 }
 
-// pcsDelete moves paths to the recycle bin (here: forgets them).
-func (f *Fake) pcsDelete(w http.ResponseWriter, r *http.Request) {
-	r.ParseMultipartForm(1 << 20)
-	var param struct{ List []struct{ Path string } }
-	json.Unmarshal([]byte(r.FormValue("param")), &param)
-	for _, it := range param.List {
-		if f.nodes[key(it.Path)] == nil {
-			w.WriteHeader(http.StatusNotFound)
-			reply(w, map[string]any{"error_code": 31066, "error_msg": "file does not exist"})
-			return
-		}
-	}
-	for _, it := range param.List {
-		for _, k := range f.subtree(it.Path) {
-			delete(f.nodes, k)
-		}
-	}
-	reply(w, map[string]any{"request_id": 1})
-}
-
-// fileManager copies or moves; items apply in order until one fails. Its
-// delete answers errno 132 (a security check), as the real one did.
+// fileManager deletes, renames, copies or moves; items apply in order until
+// one fails (errno 12 and each processed item's errno).
 func (f *Fake) fileManager(w http.ResponseWriter, r *http.Request) {
-	opera, list := r.Form.Get("opera"), r.Form.Get("filelist")
+	opera, list := r.URL.Query().Get("opera"), r.Form.Get("filelist")
 	if opera == "delete" {
-		reply(w, map[string]any{"errno": 132, "info": []any{}})
+		var paths []string
+		json.Unmarshal([]byte(list), &paths)
+		for _, p := range paths { // missing paths are silently fine, as on the real service
+			if top := f.nodes[key(p)]; top != nil {
+				var removed []*node
+				for _, k := range f.subtree(p) {
+					removed = append(removed, f.nodes[k])
+					delete(f.nodes, k)
+				}
+				f.recycle[top.id] = removed
+			}
+		}
+		reply(w, map[string]any{"errno": 0})
 		return
 	}
 	var items []struct{ Path, Dest, Newname string }
 	json.Unmarshal([]byte(list), &items)
 	var info []any
 	for _, it := range items {
-		to := path.Join(it.Dest, it.Newname)
+		dest := it.Dest
+		if opera == "rename" {
+			dest = path.Dir(it.Path)
+		}
+		to := path.Join(dest, it.Newname)
 		errno := 0
 		switch {
 		case f.nodes[key(it.Path)] == nil:
 			errno = -9
-		case f.nodes[key(to)] != nil:
+		case f.nodes[key(to)] != nil && !(opera == "rename" && key(to) == key(it.Path)):
 			errno = -8
 		}
 		info = append(info, map[string]any{"errno": errno, "path": it.Path})
@@ -395,13 +481,14 @@ func (f *Fake) fileManager(w http.ResponseWriter, r *http.Request) {
 			reply(w, map[string]any{"errno": 12, "info": info})
 			return
 		}
-		f.mkdirAll(it.Dest)
+		f.mkdirAll(dest)
 		src := f.nodes[key(it.Path)].path
 		for _, k := range f.subtree(src) { // keys collected first: the loop adds nodes
 			n := *f.nodes[k]
 			n.path = to + strings.TrimPrefix(n.path, src)
-			n.id = f.id()
-			if opera == "move" {
+			if opera == "copy" {
+				n.id = f.id()
+			} else {
 				delete(f.nodes, k)
 			}
 			f.nodes[key(n.path)] = &n
@@ -421,24 +508,85 @@ func (f *Fake) subtree(p string) []string {
 	return keys
 }
 
-func (f *Fake) locate(w http.ResponseWriter, r *http.Request) {
-	n := f.nodes[key(r.Form.Get("path"))]
-	if n == nil || n.dir {
-		reply(w, map[string]any{"error_code": 31066, "error_msg": "file does not exist"})
+// download answers dlinks for fs ids, if the request is signed.
+func (f *Fake) download(w http.ResponseWriter, r *http.Request) {
+	c, _ := rc4.NewCipher([]byte(sign3))
+	want := []byte(sign1)
+	c.XORKeyStream(want, want)
+	if r.Form.Get("sign") != base64.StdEncoding.EncodeToString(want) {
+		reply(w, map[string]any{"errno": 113}) // 签名错误
 		return
 	}
-	reply(w, map[string]any{"urls": []any{
-		map[string]any{"url": "https://d1.baidupcs.com/file/x?path=" + n.path, "encrypt": 0},
-	}})
+	var ids []int64
+	json.Unmarshal([]byte(r.Form.Get("fidlist")), &ids)
+	var dlinks []any
+	for _, id := range ids {
+		for _, n := range f.nodes {
+			if n.id == id && !n.dir {
+				dlinks = append(dlinks, map[string]any{"fs_id": strconv.FormatInt(id, 10), "dlink": "https://d.pcs.baidu.com/file/x?fid=" + strconv.FormatInt(id, 10)})
+			}
+		}
+	}
+	reply(w, map[string]any{"errno": 0, "dlink": dlinks})
 }
 
+// serveContent serves a file behind a download link, in ranges.
 func (f *Fake) serveContent(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(r.URL.Query().Get("fid"), 10, 64)
 	f.mu.Lock()
-	n := f.nodes[key(r.URL.Query().Get("path"))]
+	var data []byte
+	found := false
+	for _, n := range f.nodes {
+		if n.id == id && !n.dir {
+			data, found = n.data, true
+		}
+	}
 	f.mu.Unlock()
-	if n == nil || r.Header.Get("User-Agent") == "" {
+	if !found || r.Header.Get("User-Agent") == "" {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(n.data))
+	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(data))
+}
+
+func (f *Fake) recycleList(w http.ResponseWriter, r *http.Request) {
+	list := []any{}
+	for id, nodes := range f.recycle {
+		m := f.raw(nodes[0], false)
+		m["fs_id"], m["leftTime"] = id, 10
+		list = append(list, m)
+	}
+	reply(w, map[string]any{"errno": 0, "list": list})
+}
+
+func (f *Fake) restore(w http.ResponseWriter, r *http.Request) {
+	var ids []int64
+	json.Unmarshal([]byte(r.Form.Get("fidlist")), &ids)
+	for _, id := range ids {
+		for _, n := range f.recycle[id] {
+			f.nodes[key(n.path)] = n
+		}
+		delete(f.recycle, id)
+	}
+	reply(w, map[string]any{"errno": 0, "faillist": []any{}})
+}
+
+func (f *Fake) addTask(w http.ResponseWriter, r *http.Request) {
+	id := f.id()
+	f.tasks[id] = r.Form.Get("source_url")
+	reply(w, map[string]any{"task_id": id})
+}
+
+func (f *Fake) listTasks(w http.ResponseWriter, r *http.Request) {
+	list := []any{}
+	for id, src := range f.tasks {
+		list = append(list, map[string]any{"task_id": strconv.FormatInt(id, 10), "source_url": src, "status": "1"})
+	}
+	reply(w, map[string]any{"task_info": list, "total": len(list)})
+}
+
+func (f *Fake) deleteTask(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(r.Form.Get("task_id"), 10, 64)
+	delete(f.tasks, id)
+	reply(w, map[string]any{"request_id": 1})
 }

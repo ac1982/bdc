@@ -37,8 +37,7 @@ Flags:
   mv                 移动或重命名文件或目录
   recycle list       列出回收站
   recycle restore    还原文件
-  recycle delete     彻底删除文件
-  recycle clear      清空回收站
+  recycle delete     彻底删除文件 (百度可能要求在网页或手机上完成安全验证)
 
 传输
   download          下载文件或目录
@@ -47,7 +46,6 @@ Flags:
   offline list      列出任务
   offline cancel    取消任务
   offline delete    删除任务记录
-  offline clear     清除已结束的任务记录
 
 分享
   share create    创建分享链接
@@ -116,7 +114,7 @@ Usage: bdc su <user> [flags]
 切换帐号
 
 Arguments:
-  <user>    要切换到的帐号: uid 或用户名
+  <user>    要切换到的帐号: uk 或用户名
 
 Flags:
       --json       stdout 只输出一份 JSON 文档, 日志和进度在 stderr
@@ -295,22 +293,10 @@ Flags:
 === bdc recycle delete --help
 Usage: bdc recycle delete <fs_id> ... [flags]
 
-彻底删除文件
+彻底删除文件 (百度可能要求在网页或手机上完成安全验证)
 
 Arguments:
   <fs_id> ...    要彻底删除的文件的 fs_id
-
-Flags:
-      --json       stdout 只输出一份 JSON 文档, 日志和进度在 stderr
-  -h, --help       显示帮助
-  -v, --version    显示版本
-
-  -y, --yes        不再确认
-
-=== bdc recycle clear --help
-Usage: bdc recycle clear [flags]
-
-清空回收站
 
 Flags:
       --json       stdout 只输出一份 JSON 文档, 日志和进度在 stderr
@@ -401,16 +387,6 @@ Usage: bdc offline delete <id> ...
 
 Arguments:
   <id> ...    任务 id
-
-Flags:
-      --json       stdout 只输出一份 JSON 文档, 日志和进度在 stderr
-  -h, --help       显示帮助
-  -v, --version    显示版本
-
-=== bdc offline clear --help
-Usage: bdc offline clear
-
-清除已结束的任务记录
 
 Flags:
       --json       stdout 只输出一份 JSON 文档, 日志和进度在 stderr

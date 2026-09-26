@@ -64,7 +64,7 @@ Transfers are resumable: an interrupted download or upload continues where it st
 [llms.txt](llms.txt) is the full guide. In short:
 
 - `--json` (before or after the command) puts exactly one JSON document on stdout, with `ok`, `command` and, on failure, `error: {kind, message, exitCode, code?}`. Progress and logs go to stderr. Whatever finished before a failure is still in the document.
-- Nothing waits for input without a terminal: `logout`, `recycle delete|clear` and `update` need `-y`.
+- Nothing waits for input without a terminal: `logout`, `recycle delete` and `update` need `-y`.
 - Exit codes:
 
 | code | `error.kind` | meaning |

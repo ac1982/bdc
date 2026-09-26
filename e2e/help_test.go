@@ -11,8 +11,8 @@ import (
 var commands = []string{
 	"", "login", "logout", "who", "users", "su", "quota",
 	"ls", "tree", "meta", "search", "cd", "pwd",
-	"mkdir", "rm", "cp", "mv", "recycle list", "recycle restore", "recycle delete", "recycle clear",
-	"download", "upload", "offline add", "offline list", "offline cancel", "offline delete", "offline clear",
+	"mkdir", "rm", "cp", "mv", "recycle list", "recycle restore", "recycle delete",
+	"download", "upload", "offline add", "offline list", "offline cancel", "offline delete",
 	"share create", "share list", "share cancel", "share save",
 	"config show", "config set", "config reset", "update",
 }

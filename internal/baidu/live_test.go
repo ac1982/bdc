@@ -16,7 +16,7 @@ func liveClient(t *testing.T) *Client {
 	if cookies == "" {
 		t.Skip("set BDC_LIVE_COOKIES to run live tests")
 	}
-	c, err := New(nil, cookies, 0)
+	c, err := New(nil, cookies)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,10 +30,6 @@ func TestLiveReadOnly(t *testing.T) {
 	c := liveClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	t.Logf("uid set: %v", c.UID != 0)
-	if uk, err := c.UK(ctx); err != nil || uk == 0 {
-		t.Errorf("UK: %v %v", uk, err)
-	}
 	if q, err := c.Quota(ctx); err != nil || q.Total == 0 {
 		t.Errorf("Quota: %+v %v", q, err)
 	}
@@ -52,7 +48,7 @@ func TestLiveReadOnly(t *testing.T) {
 	t.Logf("Shares: %d, err=%v", len(s), err)
 	o, err := c.OfflineTasks(ctx)
 	t.Logf("OfflineTasks: %d, err=%v", len(o), err)
-	bad, _ := New(nil, "BDUSS=invalid-login-for-test", c.UID)
+	bad, _ := New(nil, "BDUSS=invalid-login-for-test")
 	if _, err := bad.Quota(ctx); !errors.Is(err, ErrAuth) {
 		t.Errorf("quota with a bad login: %v", err)
 	}

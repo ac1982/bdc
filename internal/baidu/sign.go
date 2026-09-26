@@ -2,76 +2,43 @@ package baidu
 
 import (
 	"crypto/md5"
-	"crypto/sha1"
+	"crypto/rc4"
+	"encoding/base64"
 	"encoding/hex"
-	"slices"
 	"strconv"
 	"strings"
 )
 
-func md5hex(s string) string {
-	sum := md5.Sum([]byte(s))
+func md5hex(b []byte) string {
+	sum := md5.Sum(b)
 	return hex.EncodeToString(sum[:])
 }
 
-func sha1hex(s string) string {
-	sum := sha1.Sum([]byte(s))
-	return hex.EncodeToString(sum[:])
+// downloadSign signs a download request the way the web app does: RC4 of
+// sign1 keyed with sign3 (both template variables), in base64.
+func downloadSign(sign1, sign3 string) string {
+	c, _ := rc4.NewCipher([]byte(sign3))
+	out := []byte(sign1)
+	c.XORKeyStream(out, out)
+	return base64.StdEncoding.EncodeToString(out)
 }
 
-// devUID identifies this "device" to the download API; derived from BDUSS.
-func devUID(bduss string) string {
-	return strings.ToUpper(md5hex(bduss)) + "|0"
+// obfuscateMD5 is how md5s travel in Baidu's APIs; deobfuscateMD5 undoes it.
+// The block swap is its own inverse; the digits are XORed with their position,
+// and the tenth becomes a letter g–v, which marks the value as obfuscated.
+func obfuscateMD5(m string) string {
+	if len(m) != 32 {
+		return m
+	}
+	o := []byte(m[8:16] + m[0:8] + m[24:32] + m[16:24])
+	for i, c := range o {
+		o[i] = hexDigit(hexValue(c) ^ (i & 15))
+	}
+	o[9] = byte('g' + hexValue(o[9]))
+	return string(o)
 }
 
-// locateSecret is the netdisk client's constant for signing locatedownload.
-const locateSecret = "ebrcUYiuxaZv2XGu7KIYKxUrqfnOfpDF"
-
-// locateRand signs a locatedownload request made at unix time t.
-func locateRand(bduss string, uid uint64, t int64, devuid string) string {
-	return sha1hex(sha1hex(bduss) + strconv.FormatUint(uid, 10) + locateSecret + strconv.FormatInt(t, 10) + devuid)
-}
-
-// tiebaSign signs tieba client requests: md5 of the sorted raw key=value
-// pairs followed by a constant.
-func tiebaSign(params map[string]string) string {
-	keys := make([]string, 0, len(params))
-	for k := range params {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	var b strings.Builder
-	for _, k := range keys {
-		b.WriteString(k + "=" + params[k])
-	}
-	return strings.ToUpper(md5hex(b.String() + "tiebaclient!!!"))
-}
-
-// tiebaDevice is the fixed phone the tieba login pretends to be.
-var tiebaDevice = func() map[string]string {
-	const model, version, from = "LG-H818", "7.0.0.0", "mini_ad_wandoujia"
-	h := uint64(53202347234687234)
-	for _, c := range []byte(model + "_") {
-		h += h<<5 + uint64(c)
-	}
-	h %= 1e15
-	if h < 1e14 {
-		h += 1e14
-	}
-	imei := strconv.FormatUint(h, 10)
-	rev := []byte(imei)
-	slices.Reverse(rev)
-	return map[string]string{
-		"_client_type":    "2",
-		"_client_version": version,
-		"_phone_imei":     imei,
-		"from":            from,
-		"model":           model,
-		"cuid":            strings.ToUpper(md5hex("_"+version+"_"+imei+"_"+from)) + "|" + string(rev),
-	}
-}()
-
-// deobfuscateMD5 undoes the obfuscation Baidu applies to md5 fields.
+// deobfuscateMD5 undoes obfuscateMD5; plain md5s pass through.
 func deobfuscateMD5(raw string) string {
 	if len(raw) != 32 || strings.ContainsRune("0123456789abcdef", rune(raw[9])) {
 		return raw
@@ -94,14 +61,18 @@ func hexValue(c byte) int {
 	return int(c - '0')
 }
 
-// dataOffset picks the 4 KiB window of a file that precreate uses to check
-// the uploader really has the content.
-func dataOffset(uk int64, contentMD5 string, t int64, size int64) int64 {
-	span := size - 4096 + 1
+// rapidWindow is the size of the sample instant upload checks.
+const rapidWindow = 256 << 10
+
+// rapidOffset picks where in the file the sample for instant upload starts:
+// derived from the user, the (obfuscated) md5 and the time, so the uploader
+// must really have the content.
+func rapidOffset(uk int64, obfuscatedMD5 string, t, size int64) int64 {
+	span := size - rapidWindow + 1
 	if span <= 1 {
 		return 0
 	}
-	h := md5hex(strconv.FormatInt(uk, 10) + contentMD5 + strconv.FormatInt(t, 10))
+	h := md5hex([]byte(strconv.FormatInt(uk, 10) + obfuscatedMD5 + strconv.FormatInt(t, 10)))
 	v, _ := strconv.ParseUint(h[:8], 16, 64)
 	return int64(v % uint64(span))
 }
