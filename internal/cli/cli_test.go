@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ac1982/baidunetdisk-cli/internal/baidutest"
 	"github.com/ac1982/baidunetdisk-cli/internal/config"
@@ -472,7 +473,7 @@ func TestSecurityCheck(t *testing.T) {
 	if code := ta.run("rm", "/d/a"); code != 0 || ta.fake.Exists("/d/a") {
 		t.Fatalf("with the code: %d %s", code, ta.stderr.String())
 	}
-	for _, want := range []string{"1) 短信 138*****000", "验证码已发送到 138*****000", "验证失败: 验证码错误", "验证通过"} {
+	for _, want := range []string{"1) 短信 138*****000", "验证码已发送到 138*****000", "验证码错误", "验证通过"} {
 		if !strings.Contains(ta.stderr.String(), want) {
 			t.Errorf("dialog lacks %q:\n%s", want, ta.stderr.String())
 		}
@@ -601,5 +602,75 @@ func TestRestoreWaitsForTask(t *testing.T) {
 	}
 	if code := ta.run("recycle", "restore", id); code != 2 {
 		t.Errorf("restore of a failed task: %d %s", code, ta.stderr.String())
+	}
+}
+
+// guardedApp is a test app whose fake demands a security check, answered
+// at a "terminal" with the given lines.
+func guardedApp(t *testing.T, answers string) *testApp {
+	ta := newTestApp(t)
+	ta.fake.Guarded = true
+	in := filepath.Join(t.TempDir(), "in")
+	os.WriteFile(in, []byte(answers), 0o600)
+	var err error
+	if ta.stdin, err = os.Open(in); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ta.stdin.Close() })
+	client, _ := ta.baidu()
+	client.SetVerifier(ta.verify)
+	return ta
+}
+
+// Giving up ends the command: its other requests do not ask again.
+func TestSecurityCheckGiveUp(t *testing.T) {
+	ta := guardedApp(t, "q\n")
+	src := t.TempDir()
+	for _, n := range []string{"a", "b", "c", "d"} {
+		os.WriteFile(filepath.Join(src, n), []byte(n), 0o600)
+	}
+	if code := ta.run("upload", src, "/up"); code != 130 {
+		t.Errorf("exit %d: %s", code, ta.stderr.String())
+	}
+	if n := ta.fake.Requests["pan.baidu.com/api/authwidget?get"]; n != 1 {
+		t.Errorf("asked %d times", n)
+	}
+}
+
+// A lost login while checking ends the check with it, not with "cancelled".
+func TestSecurityCheckLoginLost(t *testing.T) {
+	ta := guardedApp(t, "\n111111\n222222\nq\n")
+	ta.fake.Put("/d/a", nil, 1)
+	ta.fake.Fail = func(endpoint string, n int) any {
+		if endpoint == "pan.baidu.com/api/authwidget?check" {
+			return map[string]any{"errno": -6}
+		}
+		return nil
+	}
+	if code := ta.run("rm", "/d/a"); code != 4 {
+		t.Errorf("exit %d: %s", code, ta.stderr.String())
+	}
+	if n := ta.fake.Requests["pan.baidu.com/api/authwidget?check"]; n != 1 {
+		t.Errorf("checked %d times", n)
+	}
+}
+
+// A question is dropped when the command is cancelled (Ctrl-C, SIGTERM).
+func TestAskCancelled(t *testing.T) {
+	ta := newTestApp(t)
+	r, w, _ := os.Pipe() // input that never comes
+	defer w.Close()
+	ta.stdin = r
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	done := make(chan error)
+	go func() { _, err := ta.ask(ctx, "? "); done <- err }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("no error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("still waiting for an answer")
 	}
 }

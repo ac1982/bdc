@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
@@ -205,6 +206,27 @@ func TestSecurityCheckWithoutVerifier(t *testing.T) {
 	f.Guarded = true
 	c, _ := New(f.Client(), baidutest.Cookies)
 	if _, err := c.Mkdir(context.Background(), "/d"); !errors.Is(err, ErrAuth) || Code(err) != 132 {
+		t.Fatal(err)
+	}
+}
+
+// A request waiting for another's check can be cancelled.
+func TestSecurityCheckWaitCancelled(t *testing.T) {
+	f := baidutest.New()
+	f.Guarded = true
+	c, _ := New(f.Client(), baidutest.Cookies)
+	asking, release := make(chan struct{}), make(chan struct{})
+	c.SetVerifier(func(ctx context.Context, k *Check) error {
+		close(asking)
+		<-release // the person takes their time
+		return errors.New("gave up")
+	})
+	defer close(release)
+	go c.Mkdir(context.Background(), "/a")
+	<-asking
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := c.Mkdir(ctx, "/b"); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal(err)
 	}
 }

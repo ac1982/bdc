@@ -37,9 +37,10 @@ type Client struct {
 	me   *identity // see whoami
 	sign *signature
 
-	verifier Verifier   // passes security checks; nil: they fail
-	checkMu  sync.Mutex // one check at a time
-	passed   time.Time  // when the last check was passed
+	verifier Verifier      // passes security checks; nil: they fail
+	checking chan struct{} // held during a check: one at a time
+	checked  time.Time     // when the last check ended
+	checkErr error         // and how: nil if passed
 }
 
 // identity is what the template variables say about the logged-in user.
@@ -57,7 +58,7 @@ func New(hc *http.Client, cookies string) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("无法解析 Cookie: %w", err)
 	}
-	c := &Client{http: &http.Client{}}
+	c := &Client{http: &http.Client{}, checking: make(chan struct{}, 1)}
 	if hc != nil {
 		*c.http = *hc
 	}

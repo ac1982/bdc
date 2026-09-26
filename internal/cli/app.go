@@ -3,7 +3,6 @@
 package cli
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -18,6 +17,7 @@ import (
 	"syscall"
 
 	"github.com/alecthomas/kong"
+	"github.com/chzyer/readline"
 	"github.com/mattn/go-isatty"
 
 	"github.com/ac1982/baidunetdisk-cli/internal/baidu"
@@ -30,13 +30,16 @@ var Version = "dev"
 // App is the state one run of bdc shares between commands: in the
 // interactive shell it lives across many commands.
 type App struct {
-	ctx    context.Context
-	cfg    *config.Config
-	json   bool
-	stdout io.Writer
-	stderr io.Writer
-	stdin  *os.File
-	input  *bufio.Reader // reads answers from stdin; see ask
+	ctx     context.Context
+	cancel  context.CancelFunc // cancels ctx: the command
+	cfg     *config.Config
+	json    bool
+	stdout  io.Writer
+	stderr  io.Writer
+	stdin   *os.File
+	line    *readline.Instance // reads the terminal, see readLine; the shell's own in the shell
+	pending chan lineRead      // a line still being read, handed to the next readLine
+	meter   *meter             // the progress of the running transfer, if any
 
 	client    *baidu.Client
 	clientKey string            // what client was built from
@@ -60,6 +63,11 @@ type runner interface {
 func Main(args []string) int {
 	defer func() { stopCassette() }() // set once the client is built
 	app := &App{ctx: context.Background(), json: hasJSONFlag(args), stdout: os.Stdout, stderr: os.Stderr, stdin: os.Stdin}
+	defer func() {
+		if app.line != nil {
+			app.line.Close()
+		}
+	}()
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -79,10 +87,12 @@ func Main(args []string) int {
 func (a *App) exec(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	prev := a.ctx
-	a.ctx = ctx
-	defer func() { a.ctx = prev }() // the shell outlives each command
-	a.json = hasJSONFlag(args)      // until parsed, for errors about the command line
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	prev, prevCancel := a.ctx, a.cancel
+	a.ctx, a.cancel = ctx, cancel
+	defer func() { a.ctx, a.cancel = prev, prevCancel }() // the shell outlives each command
+	a.json = hasJSONFlag(args)                            // until parsed, for errors about the command line
 	var root root
 	var help bytes.Buffer
 	kctx, err := newParser(&root, &help, a.stderr).Parse(args)
@@ -159,7 +169,7 @@ func (a *App) confirm(yes bool, question string) error {
 	if !a.interactive() {
 		return usagef("需要确认, 没有终端时请加 -y")
 	}
-	answer, _ := a.ask(question + " [y/N] ")
+	answer, _ := a.ask(a.ctx, question+" [y/N] ")
 	switch strings.ToLower(answer) {
 	case "y", "yes":
 		return nil
@@ -170,16 +180,46 @@ func (a *App) confirm(yes bool, question string) error {
 var errCancelled = withKind(Cancelled, errors.New("已取消"))
 
 // ask puts a question to the person at the terminal and returns the answer.
-func (a *App) ask(question string) (string, error) {
-	fmt.Fprint(a.stderr, question)
-	if a.input == nil {
-		a.input = bufio.NewReader(a.stdin)
+func (a *App) ask(ctx context.Context, question string) (string, error) {
+	if a.line == nil {
+		rl, err := readline.NewEx(&readline.Config{Stdin: a.stdin, Stdout: a.stderr, Stderr: a.stderr})
+		if err != nil {
+			return "", err
+		}
+		a.line = rl
 	}
-	answer, err := a.input.ReadString('\n')
-	if err != nil && answer == "" {
-		return "", err
+	answer, err := a.readLine(ctx, question)
+	return strings.TrimSpace(answer), err
+}
+
+type lineRead struct {
+	line string
+	err  error
+}
+
+// readLine reads a line from the terminal after prompt. Ctrl-C is
+// readline.ErrInterrupt, end of input io.EOF. If ctx ends first, it returns
+// ctx's error, and the line being read goes to the next call: a read cannot
+// be taken back.
+func (a *App) readLine(ctx context.Context, prompt string) (string, error) {
+	a.line.SetPrompt(prompt)
+	if a.pending == nil {
+		read := make(chan lineRead, 1)
+		go func() {
+			line, err := a.line.Readline()
+			read <- lineRead{line, err}
+		}()
+		a.pending = read
+	} else {
+		a.line.Refresh() // shows the new prompt
 	}
-	return strings.TrimSpace(answer), nil
+	select {
+	case r := <-a.pending:
+		a.pending = nil
+		return r.line, r.err
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 }
 
 // interactive reports whether a person is at the terminal.

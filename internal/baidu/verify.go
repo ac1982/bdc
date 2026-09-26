@@ -73,6 +73,14 @@ func (k *Check) call(ctx context.Context, method, op string, form url.Values, ou
 	return k.c.send(ctx, &request{op: op, path: "api/authwidget", query: url.Values{"method": {method}}, form: f}, out)
 }
 
+// Rejected reports whether err is Baidu turning down an answer to a check
+// (a wrong or expired code, a code sent too often): something the person
+// can answer again. A lost login, like a failed connection, ends the check.
+func Rejected(err error) bool {
+	e, ok := errors.AsType[*Error](err)
+	return ok && e.Code != 0 && !errors.Is(err, ErrAuth)
+}
+
 // checkOf is the security check that stopped a request, if the client can
 // pass it.
 func (c *Client) checkOf(err error) *Check {
@@ -83,18 +91,23 @@ func (c *Client) checkOf(err error) *Check {
 	return &Check{c: c, form: e.check}
 }
 
-// pass passes a check that stopped a request sent at sent, unless another
-// request passed one since: concurrent requests are stopped together, and
-// the user is asked once.
+// pass passes a check that stopped a request sent at sent. Concurrent
+// requests are stopped together: a check that ended after the request was
+// sent decides for it too (passed or given up), so the user is asked once.
 func (c *Client) pass(ctx context.Context, k *Check, sent time.Time) error {
-	c.checkMu.Lock()
-	defer c.checkMu.Unlock()
-	if c.passed.After(sent) {
-		return nil
+	select {
+	case c.checking <- struct{}{}:
+		defer func() { <-c.checking }()
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-	if err := c.verifier(ctx, k); err != nil {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	c.passed = time.Now()
-	return nil
+	if c.checked.After(sent) {
+		return c.checkErr
+	}
+	c.checkErr = c.verifier(ctx, k)
+	c.checked = time.Now()
+	return c.checkErr
 }

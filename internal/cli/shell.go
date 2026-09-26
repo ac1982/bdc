@@ -36,9 +36,10 @@ func (a *App) shell() int {
 		return a.report("", nil, err)
 	}
 	defer rl.Close()
+	a.line = rl // questions during a command are asked with it too
 	fmt.Fprintln(a.stderr, "bdc", Version, "交互模式. 输入 help 查看命令, exit 退出. Tab 补全命令和网盘路径.")
 	for {
-		line, err := rl.Readline()
+		line, err := a.readLine(context.Background(), a.prompt())
 		if errors.Is(err, readline.ErrInterrupt) {
 			continue
 		}
@@ -63,7 +64,6 @@ func (a *App) shell() int {
 			rl.SaveHistory(line)
 		}
 		a.exec(args)
-		rl.SetPrompt(a.prompt())
 	}
 }
 
