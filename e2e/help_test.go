@@ -35,6 +35,12 @@ func TestHelp(t *testing.T) {
 	}
 	want, _ := os.ReadFile("golden/help.txt")
 	if got != string(want) {
-		t.Fatal("help differs from golden/help.txt; run go test ./e2e -update -run TestHelp to accept")
+		g, w := strings.Split(got, "\n"), strings.Split(string(want), "\n")
+		for i := range min(len(g), len(w)) {
+			if g[i] != w[i] {
+				t.Fatalf("help differs from golden/help.txt at line %d:\n got: %q\nwant: %q\nrun go test ./e2e -update -run TestHelp to accept", i+1, g[i], w[i])
+			}
+		}
+		t.Fatalf("help differs from golden/help.txt in length (%d lines, want %d); run go test ./e2e -update -run TestHelp to accept", len(g), len(w))
 	}
 }
