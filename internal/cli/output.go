@@ -44,10 +44,8 @@ func writeJSON(w io.Writer, command string, res Result, err error) error {
 		}
 		doc["error"] = e
 	}
-	data, merr := json.MarshalIndent(doc, "", "  ")
-	if merr != nil {
-		return merr
-	}
-	_, werr := fmt.Fprintf(w, "%s\n", data)
-	return werr
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	return enc.Encode(doc)
 }

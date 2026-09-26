@@ -39,6 +39,7 @@ type root struct {
 	Offline offlineCmd `cmd:"" group:"传输" help:"离线下载: 由百度的服务器下载链接到网盘"`
 
 	Config configCmd `cmd:"" group:"其他" help:"显示和修改设置"`
+	Update updateCmd `cmd:"" group:"其他" help:"检查并安装新版本"`
 }
 
 var (

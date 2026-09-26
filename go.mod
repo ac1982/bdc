@@ -6,8 +6,12 @@ require (
 	github.com/alecthomas/kong v1.16.1
 	github.com/browserutils/kooky v0.2.10
 	github.com/cenkalti/backoff/v5 v5.0.3
+	github.com/chzyer/readline v1.5.1
+	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51
 	github.com/mattn/go-isatty v0.0.24
 	github.com/mattn/go-runewidth v0.0.30
+	github.com/schollz/progressbar/v3 v3.19.1
+	golang.org/x/mod v0.41.0
 	golang.org/x/sync v0.23.0
 	golang.org/x/time v0.16.0
 	gopkg.in/dnaeon/go-vcr.v4 v4.0.7
@@ -22,7 +26,6 @@ require (
 	github.com/keybase/go-keychain v0.0.1 // indirect
 	github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
-	github.com/schollz/progressbar/v3 v3.19.1 // indirect
 	github.com/zalando/go-keyring v0.2.7 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.6 // indirect
 	golang.org/x/crypto v0.48.0 // indirect

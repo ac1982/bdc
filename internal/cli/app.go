@@ -39,6 +39,14 @@ type App struct {
 	client *baidu.Client
 }
 
+const description = `百度网盘命令行客户端, 为人和 AI agent 而生.
+
+  网盘路径是绝对路径, 或相对于 cd 设定的工作目录; 通配符 * ? [ ] 由 bnd 展开.
+  --json: stdout 只有一份 JSON 文档 (含 ok, command, 失败时 error), 进度和日志在 stderr.
+  退出码: 0 成功, 1 服务器/网络/传输失败, 2 输入有误 (不存在, 已存在, 无匹配, 提取码错误),
+          3 缺少依赖或权限, 4 未登录或登录过期, 64 命令行有误或需要终端, 130 已取消.
+  没有终端时不会等待输入: 需要确认的命令要加 -y.`
+
 // runner is implemented by every command.
 type runner interface {
 	Run(app *App) (Result, error)
@@ -46,9 +54,8 @@ type runner interface {
 
 // Main runs bnd with the arguments after the program name and returns the exit code.
 func Main(args []string) int {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	app := &App{ctx: ctx, json: hasJSONFlag(args), stdout: os.Stdout, stderr: os.Stderr, stdin: os.Stdin}
+	defer stopCassette()
+	app := &App{ctx: context.Background(), json: hasJSONFlag(args), stdout: os.Stdout, stderr: os.Stderr, stdin: os.Stdin}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -64,14 +71,17 @@ func Main(args []string) int {
 	return app.exec(args)
 }
 
-// exec parses and runs one command line.
+// exec parses and runs one command line. Ctrl-C cancels the command.
 func (a *App) exec(args []string) int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	a.ctx = ctx
 	a.json = hasJSONFlag(args)
 	var root root
 	var help bytes.Buffer
 	parser, err := kong.New(&root,
 		kong.Name("bnd"),
-		kong.Description("百度网盘命令行客户端, 为人和 AI agent 而生. 用 --json 得到一份 JSON 文档."),
+		kong.Description(description),
 		kong.NoDefaultHelp(),
 		kong.Writers(&help, a.stderr),
 		kong.Exit(func(int) {}),
@@ -90,7 +100,7 @@ func (a *App) exec(args []string) int {
 	command := commandName(kctx)
 	switch {
 	case errors.Is(err, errShowHelp):
-		if perr := kong.DefaultHelpPrinter(kong.HelpOptions{Compact: true}, kctx); perr != nil {
+		if perr := kctx.PrintUsage(false); perr != nil {
 			return a.report(command, nil, perr)
 		}
 		return a.report("help", helpResult{help.String()}, nil)

@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/ac1982/baidunetdisk-cli/internal/baidu"
+	"github.com/ac1982/baidunetdisk-cli/internal/update"
 )
 
 // recycle
@@ -222,5 +223,50 @@ func eachID(app *App, ids []int64, verb string, op func(*baidu.Client, context.C
 		}
 		r.IDs = append(r.IDs, id)
 	}
+	return r, nil
+}
+
+// update
+
+type updateCmd struct {
+	Check bool `help:"只检查, 不安装"`
+	Yes   bool `short:"y" help:"不再确认"`
+}
+
+type updateResult struct {
+	Current   string `json:"current"`
+	Latest    string `json:"latest"`
+	Available bool   `json:"available"`
+	Installed bool   `json:"installed"`
+	URL       string `json:"url"`
+}
+
+func (r updateResult) Human(w io.Writer) {
+	switch {
+	case r.Installed:
+		fmt.Fprintf(w, "已更新到 %s\n", r.Latest)
+	case r.Available:
+		fmt.Fprintf(w, "有新版本 %s (当前 %s): %s\n", r.Latest, r.Current, r.URL)
+	default:
+		fmt.Fprintf(w, "已是最新版本 %s\n", r.Current)
+	}
+}
+
+func (c *updateCmd) Run(app *App) (Result, error) {
+	rel, err := update.Latest(app.ctx)
+	if err != nil {
+		return nil, err
+	}
+	r := updateResult{Current: Version, Latest: rel.Version, URL: rel.URL, Available: update.Newer(rel.Version, Version)}
+	if c.Check || !r.Available {
+		return r, nil
+	}
+	if err := app.confirm(c.Yes, fmt.Sprintf("安装 %s?", rel.Version)); err != nil {
+		return r, err
+	}
+	if err := rel.Install(app.ctx); err != nil {
+		return r, err
+	}
+	r.Installed = true
 	return r, nil
 }
