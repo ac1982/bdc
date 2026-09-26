@@ -22,48 +22,47 @@ import (
 func (a *App) shell() int {
 	dir, _ := config.Dir()
 	keys := a.keyboard() // shared with the questions commands ask
-	rl, err := readline.NewEx(&readline.Config{
-		Stdin:                  keys.editorInput(),
+	cfg := readline.Config{
 		Stdout:                 a.stderr,
 		Stderr:                 a.stderr,
-		Prompt:                 a.prompt(),
 		HistoryFile:            filepath.Join(dir, "history"),
 		DisableAutoSaveHistory: true, // saved below, but never a login: it holds the cookies
 		AutoComplete:           &completer{app: a, commands: commandNames()},
 		InterruptPrompt:        "^C",
 		EOFPrompt:              "exit",
-	})
-	if err != nil {
-		return a.report("", nil, err)
 	}
-	defer rl.Close()
 	fmt.Fprintln(a.stderr, "bdc", Version, "交互模式. 输入 help 查看命令, exit 退出. Tab 补全命令和网盘路径.")
 	for {
-		rl.SetPrompt(a.prompt())
-		keys.edit()
-		line, err := rl.Readline()
-		if errors.Is(err, readline.ErrInterrupt) {
-			continue
-		}
-		if err != nil { // io.EOF: Ctrl-D
-			return 0
-		}
-		args, err := shellquote.Split(line)
+		// A fresh editor for each line: once its line is read it takes no
+		// more input, which is left for the command's questions or the next line.
+		lineCfg := cfg // readline changes its config, and each editor keeps it
+		lineCfg.Stdin, lineCfg.Prompt = keys.editorInput(), a.prompt()
+		rl, err := readline.NewEx(&lineCfg)
 		if err != nil {
-			fmt.Fprintln(a.stderr, "错误:", err)
-			continue
+			return a.report("", nil, err)
 		}
-		if len(args) == 0 {
-			continue
-		}
-		switch {
-		case args[0] == "exit" || args[0] == "quit":
-			return 0
-		case args[0] == "help":
+		line, err := rl.Readline()
+		keys.endEdit()
+		args, perr := shellquote.Split(line)
+		if len(args) > 0 && args[0] == "help" {
 			args = append(args[1:], "--help")
 		}
-		if historic(args) {
+		if err == nil && perr == nil && historic(args) {
 			rl.SaveHistory(line)
+		}
+		rl.Close()
+		switch {
+		case errors.Is(err, readline.ErrInterrupt):
+			continue
+		case err != nil: // io.EOF: Ctrl-D
+			return 0
+		case perr != nil:
+			fmt.Fprintln(a.stderr, "错误:", perr)
+			continue
+		case len(args) == 0:
+			continue
+		case args[0] == "exit" || args[0] == "quit":
+			return 0
 		}
 		a.exec(args)
 	}

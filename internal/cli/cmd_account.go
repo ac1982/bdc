@@ -60,6 +60,9 @@ func (c *loginCmd) Run(app *App) (Result, error) {
 		if cookies, err = app.ask(app.ctx, "粘贴 pan.baidu.com 的 Cookie (至少含 BDUSS): "); err != nil {
 			return nil, errCancelled
 		}
+		if cookies == "" {
+			return nil, inputf("没有输入 Cookie")
+		}
 	case cookies == "":
 		return nil, usagef("需要 --cookies, --from-chrome 或 --from-edge")
 	}

@@ -13,7 +13,7 @@ import (
 
 // The terminal's input is read into one buffer, and taken from it by one
 // reader at a time: by a question (ask), or by the shell's line editor while
-// it waits for a command line, a line at a time. Input typed while a command
+// it reads a command line. Input typed while a command
 // runs stays in the buffer for whoever reads next. Answers are plain lines,
 // edited by the terminal itself; Ctrl-C there is a signal, which cancels the
 // command.
@@ -26,7 +26,8 @@ type keyboard struct {
 	changed chan struct{} // closed and replaced on every change below
 	buf     []byte        // read, not yet taken
 	ended   bool          // the input ended
-	editing bool          // the line editor may take input: it waits for a line
+	turn    int           // the line editor whose turn it is to take input; 0: none
+	turns   int           // editors so far
 }
 
 func newKeyboard(in *os.File) *keyboard {
@@ -82,34 +83,44 @@ func (k *keyboard) discard() {
 	k.buf = nil
 }
 
-// edit lets the line editor take the next line.
-func (k *keyboard) edit() {
+// editorInput is the input of a line editor, whose turn to take input it
+// is until endEdit; then it ends.
+func (k *keyboard) editorInput() io.ReadCloser {
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	k.editing = true
+	k.turns++
+	k.turn = k.turns
+	k.notify()
+	return editorInput{k, k.turns}
+}
+
+// endEdit ends the line editor's turn: its line is read.
+func (k *keyboard) endEdit() {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.turn = 0
 	k.notify()
 }
 
-// editorInput is the input of the line editor.
-func (k *keyboard) editorInput() io.ReadCloser { return editorInput{k} }
+type editorInput struct {
+	k    *keyboard
+	turn int
+}
 
-type editorInput struct{ k *keyboard }
-
-// Read hands the editor input up to the end of its line (Enter, Ctrl-C or
-// Ctrl-D); what follows waits for the next line, or for a question the
-// command asks.
+// Read hands the editor input up to the end of a line at most, keeping what
+// follows for whoever reads next: the editor, if its line goes on, or the
+// command's questions, or the next line's editor.
 func (e editorInput) Read(p []byte) (int, error) {
 	k := e.k
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	k.wait(context.Background(), func() bool { return k.editing && len(k.buf) > 0 || k.ended })
-	if len(k.buf) == 0 {
+	k.wait(context.Background(), func() bool { return k.turn != e.turn || len(k.buf) > 0 || k.ended })
+	if k.turn != e.turn || len(k.buf) == 0 {
 		return 0, io.EOF
 	}
-	n := len(k.buf)
-	if i := bytes.IndexAny(k.buf, "\r\n\x03\x04"); i >= 0 {
+	n := min(len(p), len(k.buf))
+	if i := bytes.IndexAny(k.buf[:n], "\r\n"); i >= 0 {
 		n = i + 1
-		k.editing = false
 	}
 	n = copy(p, k.buf[:n])
 	k.buf = k.buf[n:]

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -733,8 +734,10 @@ func TestKeyboardTypeAhead(t *testing.T) {
 	defer w.Close()
 	ta := newTestApp(t)
 	ta.stdin = r
-	ta.keyboard().editorInput() // a shell, whose editor is not reading: a command runs
-	w.WriteString("\n")         // a stray Enter
+	k := ta.keyboard()
+	k.editorInput()
+	k.endEdit()         // a shell whose line is read: a command runs
+	w.WriteString("\n") // a stray Enter
 	time.AfterFunc(100*time.Millisecond, func() { w.WriteString("y\n") })
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -755,12 +758,37 @@ func TestKeyboardEditorTakesALine(t *testing.T) {
 	k := ta.keyboard()
 	in := k.editorInput()
 	w.WriteString("login\ninvalid\n")
-	k.edit()
 	buf := make([]byte, 64)
 	if n, _ := in.Read(buf); string(buf[:n]) != "login\n" {
 		t.Errorf("editor took %q", buf[:n])
 	}
+	k.endEdit()
+	if n, err := in.Read(buf); n != 0 || err != io.EOF {
+		t.Errorf("an editor whose turn ended read %q, %v", buf[:n], err)
+	}
 	if got, _ := ta.ask(context.Background(), "? "); got != "invalid" {
 		t.Errorf("answer %q", got)
+	}
+}
+
+// A line longer than the editor's reads reaches it whole.
+func TestKeyboardShortReads(t *testing.T) {
+	r, w, _ := os.Pipe()
+	defer w.Close()
+	ta := newTestApp(t)
+	ta.stdin = r
+	in := ta.keyboard().editorInput()
+	w.WriteString("pwd\nls\n")
+	var got []byte
+	buf := make([]byte, 1)
+	for !bytes.HasSuffix(got, []byte("\n")) {
+		n, err := in.Read(buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, buf[:n]...)
+	}
+	if string(got) != "pwd\n" {
+		t.Errorf("got %q", got)
 	}
 }
