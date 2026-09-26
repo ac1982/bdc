@@ -209,7 +209,7 @@ func TestDownloadRunRejectsLongBody(t *testing.T) {
 	}))
 	defer srv.Close()
 	dest := filepath.Join(t.TempDir(), "f")
-	d := &Download{Client: http.DefaultClient, Size: 4, Dest: dest,
+	d := &Download{Client: http.DefaultClient, Size: 4, Dest: dest, retryDelay: time.Millisecond,
 		URLs: func(context.Context) ([]string, error) { return []string{srv.URL}, nil }}
 	if err := d.Run(context.Background()); err == nil {
 		t.Fatal("download of an overlong response succeeded")
@@ -230,6 +230,25 @@ func TestDownloadKeepsUserTmpFile(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(dest + PartSuffix + ".json.tmp"); string(got) != "mine" {
 		t.Fatalf("user's file is now %q", got)
+	}
+}
+
+// A link that sends the wrong thing is passed over for the next one.
+func TestDownloadSkipsBadLink(t *testing.T) {
+	content := []byte("good content")
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(append(content, "and more"...)) // longer than the file
+	}))
+	defer bad.Close()
+	good := serve(t, content)
+	dest := filepath.Join(t.TempDir(), "f")
+	d := &Download{Client: http.DefaultClient, Size: int64(len(content)), Dest: dest, retryDelay: time.Millisecond,
+		URLs: func(context.Context) ([]string, error) { return []string{bad.URL, good.URL}, nil }}
+	if err := d.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(dest); !bytes.Equal(got, content) {
+		t.Fatalf("got %q", got)
 	}
 }
 
@@ -255,5 +274,24 @@ func TestDownloadRejectsLongBody(t *testing.T) {
 				t.Fatal("accepted a body longer than asked for")
 			}
 		})
+	}
+}
+
+// A download whose final rename fails can be retried: its part stays bnd's.
+func TestDownloadRetriesFailedInstall(t *testing.T) {
+	srv := serve(t, []byte("abc"))
+	dest := filepath.Join(t.TempDir(), "f")
+	os.Mkdir(dest, 0o755) // a directory in the way: the rename fails
+	d := &Download{Client: http.DefaultClient, Size: 3, Dest: dest,
+		URLs: func(context.Context) ([]string, error) { return []string{srv.URL}, nil }}
+	if err := d.Run(context.Background()); err == nil {
+		t.Fatal("installed over a directory")
+	}
+	os.Remove(dest)
+	if err := d.Run(context.Background()); err != nil {
+		t.Fatal("retry:", err)
+	}
+	if got, _ := os.ReadFile(dest); string(got) != "abc" {
+		t.Fatalf("got %q", got)
 	}
 }

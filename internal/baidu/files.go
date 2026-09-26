@@ -231,40 +231,37 @@ func (c *Client) Move(ctx context.Context, pairs ...Rename) ([]Rename, error) {
 func (c *Client) renameAll(ctx context.Context, opera, verb string, pairs []Rename) ([]Rename, error) {
 	var done []Rename
 	for _, batch := range splitBy(pairs, byCount[Rename](maxBatch)) {
-		before := c.targets(ctx, batch)
 		if err := c.fileManager(ctx, opera, verb+" "+describeFrom(batch), moves(batch)); err != nil {
-			// Baidu applies items in order until one fails: the pairs done are
-			// those whose destination appeared.
-			after := c.targets(ctx, batch)
-			for _, p := range batch {
-				if k := strings.ToLower(p.To); after[k] && !before[k] {
-					done = append(done, p)
-				}
-			}
-			return done, err
+			return append(done, doneItems(batch, err)...), err
 		}
 		done = append(done, batch...)
 	}
 	return done, nil
 }
 
-// targets reports which destinations of pairs exist, by lower-cased path
-// (Baidu ignores case), listing each destination directory once.
-func (c *Client) targets(ctx context.Context, pairs []Rename) map[string]bool {
-	exists := map[string]bool{}
-	listed := map[string]bool{}
-	for _, p := range pairs {
-		dir := strings.ToLower(path.Dir(p.To))
-		if listed[dir] {
-			continue
-		}
-		listed[dir] = true
-		entries, _ := c.List(ctx, path.Dir(p.To))
-		for _, e := range entries {
-			exists[strings.ToLower(e.Path)] = true
+// doneItems finds the pairs of a failed batch that were done anyway, from
+// Baidu's answer per item: those it reports with errno 0, and those before
+// the first failure, since it applies items in order. Without an answer per
+// item (e.g. a network error) nothing is known to be done.
+func doneItems(batch []Rename, err error) []Rename {
+	e, ok := errors.AsType[*Error](err)
+	if !ok || len(e.Items) == 0 {
+		return nil
+	}
+	errno := map[string]int{}
+	for _, it := range e.Items {
+		errno[it.Path] = int(it.Errno)
+	}
+	var done []Rename
+	failed := false
+	for _, p := range batch {
+		code, answered := errno[p.From]
+		failed = failed || (answered && code != 0)
+		if (answered && code == 0) || (!answered && !failed) {
+			done = append(done, p)
 		}
 	}
-	return exists
+	return done
 }
 
 func moves(pairs []Rename) []map[string]string {

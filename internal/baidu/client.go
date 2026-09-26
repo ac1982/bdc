@@ -177,10 +177,7 @@ func decode(op string, status int, data []byte, out any) error {
 	if code == 0 {
 		code = int(st.Errno)
 	}
-	var items []struct {
-		Errno flexInt `json:"errno"`
-		Path  string  `json:"path"`
-	}
+	var items []BatchItem
 	if code == errBatch && json.Unmarshal(st.Info, &items) == nil { // a batch call failed; the item says why
 		for _, it := range items {
 			if it.Errno != 0 {
@@ -198,7 +195,7 @@ func decode(op string, status int, data []byte, out any) error {
 		if msg == "" {
 			msg = firstNonEmpty(st.ShowMsg, st.ErrorMsg, st.ErrMsg, "未知错误")
 		}
-		return &Error{Op: op, Code: code, Message: msg}
+		return &Error{Op: op, Code: code, Message: msg, Items: items}
 	case status < 200 || status > 299:
 		return &Error{Op: op, Message: fmt.Sprintf("HTTP %d: %s", status, snippet(data))}
 	case jsonErr != nil:

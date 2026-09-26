@@ -43,6 +43,8 @@ type Download struct {
 	Limit *rate.Limiter
 	// Progress, if set, is called with the number of bytes just written.
 	Progress func(n int64)
+
+	retryDelay time.Duration // tests: constant pause between retries
 }
 
 // record is the resume state saved beside the part file. Owner marks it as
@@ -104,8 +106,13 @@ func (d *Download) Run(ctx context.Context) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
+	// Installing the file is the commit point: the record goes only after it,
+	// so a failed rename can simply be retried.
+	if err := os.Rename(part, d.Dest); err != nil {
+		return err
+	}
 	os.Remove(j.recPath)
-	return os.Rename(part, d.Dest)
+	return nil
 }
 
 // job is the shared state of one running download.
@@ -182,9 +189,16 @@ func (j *job) fetchChunk(ctx context.Context, i, worker int) error {
 		start += n // keep what arrived before a connection broke
 		return struct{}{}, err
 	}
-	_, err := backoff.Retry(ctx, op, backoff.WithMaxTries(10),
-		backoff.WithBackOff(&backoff.ExponentialBackOff{InitialInterval: time.Second, Multiplier: 2, MaxInterval: 30 * time.Second}))
+	_, err := backoff.Retry(ctx, op, backoff.WithMaxTries(10), backoff.WithBackOff(j.backoff()))
 	return err
+}
+
+// backoff paces retries of a chunk; tests make it fast.
+func (d *Download) backoff() backoff.BackOff {
+	if d.retryDelay != 0 {
+		return backoff.NewConstantBackOff(d.retryDelay)
+	}
+	return &backoff.ExponentialBackOff{InitialInterval: time.Second, Multiplier: 2, MaxInterval: 30 * time.Second}
 }
 
 // fetchRange writes bytes [start, end) of the link at their offset in f and
@@ -224,8 +238,9 @@ func (d *Download) fetchRange(ctx context.Context, f *os.File, link string, star
 		err = io.ErrUnexpectedEOF
 	default:
 		if err = expectEOF(resp.Body); err != nil {
-			// The whole response is suspect, not just its tail: none of it counts.
-			return 0, backoff.Permanent(fmt.Errorf("下载 %d-%d: %w", start, end-1, err))
+			// The whole response is suspect, not just its tail: none of it
+			// counts, and the chunk is fetched again (from another link).
+			return 0, fmt.Errorf("下载 %d-%d: %w", start, end-1, err)
 		}
 	}
 	return n, err
@@ -253,14 +268,13 @@ func (d *Download) checkRange(resp *http.Response, start, end int64) error {
 		var a, b, total int64
 		if _, err := fmt.Sscanf(resp.Header.Get("Content-Range"), "bytes %d-%d/%d", &a, &b, &total); err != nil ||
 			a != start || b != end-1 || total != d.Size {
-			// Other content than asked for: retrying will not help.
-			return backoff.Permanent(fmt.Errorf("下载 %d-%d: 服务器返回了不符的区间 %q", start, end-1, resp.Header.Get("Content-Range")))
+			return fmt.Errorf("下载 %d-%d: 服务器返回了不符的区间 %q", start, end-1, resp.Header.Get("Content-Range"))
 		}
 	case http.StatusOK: // the whole file, when that is what was asked for
 		if start != 0 || end != d.Size || (resp.ContentLength >= 0 && resp.ContentLength != d.Size) {
-			return backoff.Permanent(fmt.Errorf("下载 %d-%d: 服务器返回了整个文件 (%d 字节)", start, end-1, resp.ContentLength))
+			return fmt.Errorf("下载 %d-%d: 服务器返回了整个文件 (%d 字节)", start, end-1, resp.ContentLength)
 		}
-	default: // this link failed; another may work
+	default:
 		return fmt.Errorf("下载 %d-%d: HTTP %s", start, end-1, resp.Status)
 	}
 	return nil

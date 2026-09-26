@@ -510,7 +510,8 @@ func (rn renamer) caseOnly(app *App, client *baidu.Client, src, dst string) (Res
 		return nil, err
 	}
 	if _, err := client.Move(app.ctx, baidu.Rename{From: tmp, To: dst}); err != nil {
-		return nil, fmt.Errorf("%w (文件现在是 %s)", err, tmp)
+		// Half done: report where the file is now.
+		return renameResult{Items: []baidu.Rename{{From: src, To: tmp}}, verb: rn.verb}, err
 	}
 	return renameResult{Items: []baidu.Rename{{From: src, To: dst}}, verb: rn.verb}, nil
 }

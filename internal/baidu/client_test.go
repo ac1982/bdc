@@ -3,6 +3,7 @@ package baidu
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/ac1982/baidunetdisk-cli/internal/baidutest"
@@ -64,6 +65,29 @@ func TestUKConcurrent(t *testing.T) {
 	for range 8 {
 		if <-done != 7 {
 			t.Fatal("wrong uk")
+		}
+	}
+}
+
+func TestDoneItems(t *testing.T) {
+	batch := []Rename{{From: "/a"}, {From: "/b"}, {From: "/c"}}
+	for _, c := range []struct {
+		name  string
+		err   error
+		froms string
+	}{
+		{"every item answered", &Error{Items: []BatchItem{{"/a", 0}, {"/b", -8}}}, "/a"},
+		{"only the failure answered", &Error{Items: []BatchItem{{"/b", -8}}}, "/a"},
+		{"a later success answered", &Error{Items: []BatchItem{{"/a", -8}, {"/c", 0}}}, "/c"},
+		{"no answer per item", &Error{Code: -6}, ""},
+		{"not a Baidu error", context.Canceled, ""},
+	} {
+		var froms []string
+		for _, p := range doneItems(batch, c.err) {
+			froms = append(froms, p.From)
+		}
+		if got := strings.Join(froms, ","); got != c.froms {
+			t.Errorf("%s: done %q, want %q", c.name, got, c.froms)
 		}
 	}
 }

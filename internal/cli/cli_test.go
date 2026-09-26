@@ -355,6 +355,22 @@ func TestCaseOnlyRename(t *testing.T) {
 	}
 }
 
+func TestCaseOnlyRenameHalfDone(t *testing.T) {
+	ta := newTestApp(t)
+	ta.fake.Put("/a.txt", []byte("a"), 1)
+	ta.fake.Fail = func(endpoint string, n int) any {
+		if endpoint == "pan.baidu.com/api/filemanager" && n == 2 {
+			return map[string]any{"errno": 132}
+		}
+		return nil
+	}
+	code, doc := ta.json(t, "mv", "/a.txt", "/A.txt")
+	items, _ := doc["items"].([]any)
+	if code != 4 || len(items) != 1 || items[0].(map[string]any)["to"] != "/A.txt.bnd-rename" {
+		t.Errorf("%d %v", code, doc)
+	}
+}
+
 func TestDeepest(t *testing.T) {
 	got := deepest([]string{"/a", "/a/b", "/a/b c", "/a/b/x", "/d", "/a/b/x"}, path.Dir)
 	if want := []string{"/a/b c", "/a/b/x", "/d"}; !slices.Equal(got, want) {

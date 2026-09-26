@@ -15,10 +15,17 @@ var (
 
 // Error is a failure reported by Baidu, or a failure to reach it.
 type Error struct {
-	Op      string // what was being done, e.g. "列出目录 /a"
-	Code    int    // Baidu's error code; 0 for network and decoding failures
-	Message string // Baidu's message, or our explanation of the code
-	Err     error  // the underlying error, if any
+	Op      string      // what was being done, e.g. "列出目录 /a"
+	Code    int         // Baidu's error code; 0 for network and decoding failures
+	Message string      // Baidu's message, or our explanation of the code
+	Err     error       // the underlying error, if any
+	Items   []BatchItem // a failed batch call: Baidu's answer per item, when it gave one
+}
+
+// BatchItem is Baidu's answer for one item of a batch call; Errno 0 is done.
+type BatchItem struct {
+	Path  string  `json:"path"`
+	Errno flexInt `json:"errno"`
 }
 
 func (e *Error) Error() string {
