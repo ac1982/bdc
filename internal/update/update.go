@@ -183,16 +183,10 @@ func replace(exe string, tmp *os.File, bin []byte) error {
 	if runtime.GOOS != "windows" {
 		return os.Rename(tmp.Name(), exe) // the running program keeps the old file
 	}
-	// Windows cannot replace a running executable, but can move it aside:
-	// to a name of this update's own, removed now if possible, else by the
-	// next update.
-	dir := filepath.Dir(exe)
-	if olds, _ := filepath.Glob(filepath.Join(dir, ".bdc-old-*")); len(olds) > 0 {
-		for _, o := range olds {
-			os.Remove(o)
-		}
-	}
-	old, err := os.CreateTemp(dir, ".bdc-old-*")
+	// Windows cannot replace a running executable, but can move it aside, to
+	// a name of this update's own. That file cannot be removed while the old
+	// program runs; then it stays (nothing guesses which files are ours).
+	old, err := os.CreateTemp(filepath.Dir(exe), ".bdc-old-*")
 	if err != nil {
 		return err
 	}

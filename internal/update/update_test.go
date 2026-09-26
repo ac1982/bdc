@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -36,7 +37,7 @@ func TestHasChecksum(t *testing.T) {
 	}
 }
 
-func TestExtractAndReplace(t *testing.T) {
+func TestExtract(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("tar.gz path only")
 	}
@@ -48,37 +49,58 @@ func TestExtractAndReplace(t *testing.T) {
 	tw.Write(body)
 	tw.Close()
 	gz.Close()
-	bin, err := extract(buf.Bytes())
-	if err != nil || string(bin) != "new binary" {
+	if bin, err := extract(buf.Bytes()); err != nil || string(bin) != "new binary" {
 		t.Fatal(string(bin), err)
 	}
-	dir := t.TempDir()
-	exe := filepath.Join(dir, "bdc")
+}
+
+// Replacing touches only the files the update made, on every system: not
+// the user's files that happen to look like ours, not in a directory whose
+// name looks like a pattern.
+func TestReplace(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "[a]")
+	os.MkdirAll(dir, 0o755)
+	os.MkdirAll(filepath.Join(root, "a"), 0o755)
+	exe := filepath.Join(dir, "bdc.exe")
 	os.WriteFile(exe, []byte("old"), 0o755)
-	// Files that happen to have the names earlier versions used are the user's.
-	os.WriteFile(exe+".old", []byte("backup"), 0o600)
-	os.Symlink(filepath.Join(dir, "elsewhere"), exe+".new")
+	mine := []string{
+		exe + ".old",
+		filepath.Join(dir, ".bdc-old-user-backup"),
+		filepath.Join(root, "a", ".bdc-old-backup"),
+	}
+	for _, p := range mine {
+		os.WriteFile(p, []byte("keep"), 0o600)
+	}
+	if runtime.GOOS != "windows" {
+		os.Symlink(filepath.Join(dir, "elsewhere"), exe+".new")
+	}
 	tmp, err := os.CreateTemp(dir, ".bdc-update-*")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := replace(exe, tmp, bin); err != nil {
+	if err := replace(exe, tmp, []byte("new binary")); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := os.ReadFile(exe); string(got) != "new binary" {
 		t.Fatal(string(got))
 	}
-	if fi, _ := os.Stat(exe); fi.Mode().Perm() != 0o755 {
+	if fi, _ := os.Stat(exe); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o755 {
 		t.Errorf("mode %v", fi.Mode())
 	}
-	if b, _ := os.ReadFile(exe + ".old"); string(b) != "backup" {
-		t.Error("the user's bdc.old was touched")
+	for _, p := range mine {
+		if b, _ := os.ReadFile(p); string(b) != "keep" {
+			t.Errorf("%s was touched", p)
+		}
 	}
 	if _, err := os.Stat(filepath.Join(dir, "elsewhere")); err == nil {
 		t.Error("wrote through the user's bdc.new symlink")
 	}
-	if left, _ := filepath.Glob(filepath.Join(dir, ".bdc-*")); len(left) > 0 {
-		t.Errorf("left behind: %v", left)
+	left, _ := os.ReadDir(dir)
+	for _, e := range left {
+		if strings.HasPrefix(e.Name(), ".bdc-update-") || e.Name() != ".bdc-old-user-backup" && strings.HasPrefix(e.Name(), ".bdc-old-") {
+			t.Errorf("left behind: %s", e.Name()) // the old file is not running here, so it goes too
+		}
 	}
 }
 
