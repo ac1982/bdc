@@ -48,7 +48,8 @@ type Client struct {
 // New returns a client that authenticates with cookies ("BDUSS=…; STOKEN=…; …").
 // The http client may be nil; its Jar is replaced.
 func New(hc *http.Client, cookies string, uid uint64) (*Client, error) {
-	jar, _ := cookiejar.New(nil)
+	inner, _ := cookiejar.New(nil)
+	jar := newestJar{inner}
 	parsed, err := http.ParseCookie(cookies)
 	if err != nil {
 		return nil, fmt.Errorf("无法解析 Cookie: %w", err)
@@ -70,6 +71,27 @@ func New(hc *http.Client, cookies string, uid uint64) (*Client, error) {
 	}
 	jar.SetCookies(&url.URL{Scheme: "https", Host: "baidu.com"}, parsed)
 	return c, nil
+}
+
+// newestJar sends one cookie per name, the newest. The login cookies are
+// stored for .baidu.com, while Baidu sets its own for pan.baidu.com: after a
+// share's extraction code is verified, a stale BDCLND from the login would
+// otherwise be sent too, first, and the share would refuse to open (-9).
+type newestJar struct{ http.CookieJar }
+
+func (j newestJar) Cookies(u *url.URL) []*http.Cookie {
+	all := j.CookieJar.Cookies(u) // oldest first among equally specific ones
+	last := map[string]int{}
+	for i, c := range all {
+		last[c.Name] = i
+	}
+	var out []*http.Cookie
+	for i, c := range all {
+		if last[c.Name] == i {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // HTTP is the underlying client, cookies included, for transferring file data.

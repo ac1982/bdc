@@ -115,3 +115,23 @@ func TestSaveShareServiceDown(t *testing.T) {
 type roundTrip func(*http.Request) (*http.Response, error)
 
 func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// A cookie Baidu sets replaces the login's stale one of the same name.
+func TestNewestCookieWins(t *testing.T) {
+	var sent []string
+	hc := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		sent = append(sent, r.Header.Get("Cookie"))
+		h := http.Header{"Content-Type": {"application/json"}}
+		if len(sent) == 1 {
+			h.Set("Set-Cookie", "BDCLND=fresh; Domain=.pan.baidu.com; Path=/; Secure")
+		}
+		return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader(`{"errno":0}`)), Request: r}, nil
+	})}
+	c, _ := New(hc, "BDUSS=x; BDCLND=stale", 1)
+	for range 2 {
+		c.do(context.Background(), &request{op: "t", url: panBase + "share/list"}, nil)
+	}
+	if strings.Contains(sent[1], "stale") || !strings.Contains(sent[1], "BDCLND=fresh") || !strings.Contains(sent[1], "BDUSS=x") {
+		t.Fatalf("second request sent %q", sent[1])
+	}
+}
