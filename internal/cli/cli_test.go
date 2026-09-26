@@ -511,6 +511,11 @@ func TestShellHistoryOmitsLogin(t *testing.T) {
 		`--json login --cookies "BDUSS=SECRET2"`,
 		`--json=true login --cookies "BDUSS=SECRET3" --bogus`,
 		`logn --cookies "BDUSS=SECRET4"`, // does not parse: not kept either
+		`login --cookies "BDUSS=SECRET5" --help`,
+		`-v login --cookies "BDUSS=SECRET6"`,
+		`--help login --cookies "BDUSS=SECRET8"`,
+		`login --cookies "BDUSS=SECRET9" --version`,
+		`help login --cookies "BDUSS=SECRET7"`,
 		"ls /", "exit",
 	}
 	os.WriteFile(in, []byte(strings.Join(lines, "\n")+"\n"), 0o600)

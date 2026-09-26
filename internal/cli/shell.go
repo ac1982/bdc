@@ -74,12 +74,12 @@ func (a *App) prompt() string {
 	return "bdc (未登录)$ "
 }
 
-// historic reports whether a command line may go into the history: one that
-// parses, and not a login, whose line holds the cookies.
+// historic reports whether a command line may go into the history: a
+// command that parses and runs (not help), and not a login, whose line
+// holds the cookies.
 func historic(args []string) bool {
 	kctx, err := newParser(&root{}, io.Discard, io.Discard).Parse(args)
-	ok := err == nil || errors.Is(err, errShowHelp) || errors.Is(err, errShowVersion)
-	return ok && commandName(kctx) != "login"
+	return err == nil && commandName(kctx) != "login"
 }
 
 // commandNames lists the top-level commands of the grammar.
