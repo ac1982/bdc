@@ -241,23 +241,33 @@ func (c *Client) renameAll(ctx context.Context, opera, verb string, pairs []Rena
 
 // doneItems finds the pairs of a failed batch that were done anyway, from
 // Baidu's answer per item: those it reports with errno 0, and those before
-// the first failure, since it applies items in order. Without an answer per
+// the first failure, since it applies items in order. The order is only
+// trusted when every failure names one of the pairs; without an answer per
 // item (e.g. a network error) nothing is known to be done.
 func doneItems(batch []Rename, err error) []Rename {
 	e, ok := errors.AsType[*Error](err)
 	if !ok || len(e.Items) == 0 {
 		return nil
 	}
+	sources := map[string]bool{} // by lower-cased path: Baidu ignores case
+	for _, p := range batch {
+		sources[strings.ToLower(p.From)] = true
+	}
 	errno := map[string]int{}
+	trustOrder := true
 	for _, it := range e.Items {
-		errno[it.Path] = int(it.Errno)
+		k := strings.ToLower(it.Path)
+		errno[k] = int(it.Errno)
+		if it.Errno != 0 && !sources[k] {
+			trustOrder = false // a failure we cannot place
+		}
 	}
 	var done []Rename
 	failed := false
 	for _, p := range batch {
-		code, answered := errno[p.From]
+		code, answered := errno[strings.ToLower(p.From)]
 		failed = failed || (answered && code != 0)
-		if (answered && code == 0) || (!answered && !failed) {
+		if (answered && code == 0) || (!answered && !failed && trustOrder) {
 			done = append(done, p)
 		}
 	}

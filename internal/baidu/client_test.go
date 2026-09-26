@@ -79,6 +79,9 @@ func TestDoneItems(t *testing.T) {
 		{"every item answered", &Error{Items: []BatchItem{{"/a", 0}, {"/b", -8}}}, "/a"},
 		{"only the failure answered", &Error{Items: []BatchItem{{"/b", -8}}}, "/a"},
 		{"a later success answered", &Error{Items: []BatchItem{{"/a", -8}, {"/c", 0}}}, "/c"},
+		{"failure without a path", &Error{Items: []BatchItem{{"", -9}}}, ""},
+		{"failure without a path, a success answered", &Error{Items: []BatchItem{{"/a", 0}, {"", -9}}}, "/a"},
+		{"path in another case", &Error{Items: []BatchItem{{"/B", -8}}}, "/a"},
 		{"no answer per item", &Error{Code: -6}, ""},
 		{"not a Baidu error", context.Canceled, ""},
 	} {
