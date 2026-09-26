@@ -726,3 +726,41 @@ func TestMeterHold(t *testing.T) {
 		t.Errorf("line lost: %q", ta.stderr.String())
 	}
 }
+
+// Input typed while a command runs does not block the questions it asks.
+func TestKeyboardTypeAhead(t *testing.T) {
+	r, w, _ := os.Pipe()
+	defer w.Close()
+	ta := newTestApp(t)
+	ta.stdin = r
+	ta.keyboard().editorInput() // a shell, whose editor is not reading: a command runs
+	w.WriteString("\n")         // a stray Enter
+	time.AfterFunc(100*time.Millisecond, func() { w.WriteString("y\n") })
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, want := range []string{"", "y"} { // not a terminal: what was typed ahead counts
+		if got, err := ta.ask(ctx, "? "); got != want || err != nil {
+			t.Fatalf("got %q, %v; want %q", got, err, want)
+		}
+	}
+}
+
+// The line editor takes a line at a time: a pasted command and the answer
+// to its question are not both swallowed by the editor.
+func TestKeyboardEditorTakesALine(t *testing.T) {
+	r, w, _ := os.Pipe()
+	defer w.Close()
+	ta := newTestApp(t)
+	ta.stdin = r
+	k := ta.keyboard()
+	in := k.editorInput()
+	w.WriteString("login\ninvalid\n")
+	k.edit()
+	buf := make([]byte, 64)
+	if n, _ := in.Read(buf); string(buf[:n]) != "login\n" {
+		t.Errorf("editor took %q", buf[:n])
+	}
+	if got, _ := ta.ask(context.Background(), "? "); got != "invalid" {
+		t.Errorf("answer %q", got)
+	}
+}

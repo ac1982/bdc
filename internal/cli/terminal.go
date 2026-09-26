@@ -5,40 +5,44 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strings"
+	"os"
 	"sync"
+
+	"github.com/mattn/go-isatty"
 )
 
-// The terminal's input goes to one reader at a time: to a question (ask)
-// while one is asked, else to the shell's line editor, if there is one.
-// Answers are plain lines, edited by the terminal itself: Ctrl-C there is a
-// signal, which cancels the command, and the terminal drops the line typed.
+// The terminal's input is read into one buffer, and taken from it by one
+// reader at a time: by a question (ask), or by the shell's line editor while
+// it waits for a command line, a line at a time. Input typed while a command
+// runs stays in the buffer for whoever reads next. Answers are plain lines,
+// edited by the terminal itself; Ctrl-C there is a signal, which cancels the
+// command.
 
-// keyboard reads the terminal and hands its input on.
+// keyboard is the buffered terminal input.
 type keyboard struct {
+	tty *os.File // the terminal, or nil when the input is not one
+
 	mu      sync.Mutex
-	asking  bool          // guarded by mu
-	editor  chan []byte   // the shell's line editor reads here; nil outside the shell
-	answers chan []byte   // questions read here
-	ended   chan struct{} // closed when the input ends
-	partial []byte        // of the answers: read, not yet a whole line
+	changed chan struct{} // closed and replaced on every change below
+	buf     []byte        // read, not yet taken
+	ended   bool          // the input ended
+	editing bool          // the line editor may take input: it waits for a line
 }
 
-// newKeyboard reads r; withEditor, what is not an answer goes to a line
-// editor (see editorInput), else all is answers.
-func newKeyboard(r io.Reader, withEditor bool) *keyboard {
-	k := &keyboard{answers: make(chan []byte, 64), ended: make(chan struct{})}
-	if withEditor {
-		k.editor = make(chan []byte)
+func newKeyboard(in *os.File) *keyboard {
+	k := &keyboard{changed: make(chan struct{})}
+	if isatty.IsTerminal(in.Fd()) || isatty.IsCygwinTerminal(in.Fd()) {
+		k.tty = in
 	}
 	go func() {
-		defer close(k.ended)
+		buf := make([]byte, 4096)
 		for {
-			buf := make([]byte, 256)
-			n, err := r.Read(buf)
-			if n > 0 {
-				k.reader() <- buf[:n]
-			}
+			n, err := in.Read(buf)
+			k.mu.Lock()
+			k.buf = append(k.buf, buf[:n]...)
+			k.ended = err != nil
+			k.notify()
+			k.mu.Unlock()
 			if err != nil {
 				return
 			}
@@ -47,86 +51,102 @@ func newKeyboard(r io.Reader, withEditor bool) *keyboard {
 	return k
 }
 
-// reader is where input goes now.
-func (k *keyboard) reader() chan []byte {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	if k.editor != nil && !k.asking {
-		return k.editor
-	}
-	return k.answers
+// notify wakes those waiting for a change; mu is held.
+func (k *keyboard) notify() {
+	close(k.changed)
+	k.changed = make(chan struct{})
 }
 
-func (k *keyboard) setAsking(on bool) {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	k.asking = on
-}
-
-// editorInput is the input of the line editor: what is not an answer.
-func (k *keyboard) editorInput() io.ReadCloser { return &editorInput{k: k} }
-
-type editorInput struct {
-	k    *keyboard
-	rest []byte
-}
-
-func (e *editorInput) Read(p []byte) (int, error) {
-	if len(e.rest) == 0 {
+// wait waits, with mu held, until ready holds or ctx ends.
+func (k *keyboard) wait(ctx context.Context, ready func() bool) error {
+	for !ready() {
+		changed := k.changed
+		k.mu.Unlock()
 		select {
-		case e.rest = <-e.k.editor:
-		case <-e.k.ended:
-			return 0, io.EOF
+		case <-changed:
+			k.mu.Lock()
+		case <-ctx.Done():
+			k.mu.Lock()
+			return ctx.Err()
 		}
 	}
-	n := copy(p, e.rest)
-	e.rest = e.rest[n:]
+	return nil
+}
+
+// discard drops the input not taken yet, including what the terminal holds
+// of a line not ended.
+func (k *keyboard) discard() {
+	if k.tty != nil {
+		flushInput(k.tty)
+	}
+	k.buf = nil
+}
+
+// edit lets the line editor take the next line.
+func (k *keyboard) edit() {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.editing = true
+	k.notify()
+}
+
+// editorInput is the input of the line editor.
+func (k *keyboard) editorInput() io.ReadCloser { return editorInput{k} }
+
+type editorInput struct{ k *keyboard }
+
+// Read hands the editor input up to the end of its line (Enter, Ctrl-C or
+// Ctrl-D); what follows waits for the next line, or for a question the
+// command asks.
+func (e editorInput) Read(p []byte) (int, error) {
+	k := e.k
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.wait(context.Background(), func() bool { return k.editing && len(k.buf) > 0 || k.ended })
+	if len(k.buf) == 0 {
+		return 0, io.EOF
+	}
+	n := len(k.buf)
+	if i := bytes.IndexAny(k.buf, "\r\n\x03\x04"); i >= 0 {
+		n = i + 1
+		k.editing = false
+	}
+	n = copy(p, k.buf[:n])
+	k.buf = k.buf[n:]
 	return n, nil
 }
 
-func (e *editorInput) Close() error { return nil }
+func (editorInput) Close() error { return nil }
 
 func (a *App) keyboard() *keyboard {
 	if a.keys == nil {
-		a.keys = newKeyboard(a.stdin, false)
+		a.keys = newKeyboard(a.stdin)
 	}
 	return a.keys
 }
 
 // ask puts a question to the person at the terminal and returns the answer:
-// the next line typed. If ctx ends first (Ctrl-C), what was typed for it is
-// dropped and ctx's error returned; at the end of input, io.EOF.
+// the next line. At a terminal only what is typed after the question counts.
+// If ctx ends first (Ctrl-C), what was typed is dropped and ctx's error
+// returned; at the end of input, io.EOF.
 func (a *App) ask(ctx context.Context, question string) (string, error) {
 	k := a.keyboard()
-	fmt.Fprint(a.stderr, question)
-	k.setAsking(true)
-	defer k.setAsking(false)
-	for {
-		if i := bytes.IndexByte(k.partial, '\n'); i >= 0 {
-			line := string(k.partial[:i])
-			k.partial = k.partial[i+1:]
-			return strings.TrimSpace(line), nil
-		}
-		select {
-		case b := <-k.answers:
-			k.partial = append(k.partial, b...)
-		case <-ctx.Done():
-			k.partial = nil
-			for len(k.answers) > 0 {
-				<-k.answers
-			}
-			fmt.Fprintln(a.stderr)
-			return "", ctx.Err()
-		case <-k.ended:
-			if len(k.answers) > 0 {
-				continue
-			}
-			if len(k.partial) == 0 {
-				return "", io.EOF
-			}
-			line := string(k.partial)
-			k.partial = nil
-			return strings.TrimSpace(line), nil
-		}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.tty != nil {
+		k.discard()
 	}
+	fmt.Fprint(a.stderr, question)
+	if err := k.wait(ctx, func() bool { return bytes.IndexByte(k.buf, '\n') >= 0 || k.ended }); err != nil {
+		k.discard()
+		fmt.Fprintln(a.stderr)
+		return "", err
+	}
+	line := k.buf
+	if i := bytes.IndexByte(k.buf, '\n'); i >= 0 {
+		line, k.buf = k.buf[:i], k.buf[i+1:]
+	} else if k.buf = nil; len(line) == 0 {
+		return "", io.EOF
+	}
+	return string(bytes.TrimSpace(line)), nil
 }
