@@ -69,7 +69,7 @@ If Baidu asks for a security check, bdc asks where to send the code (SMS or emai
 
 ## Install
 
-| | |
+| Platform | How to install |
 |---|---|
 | **macOS** | Download the `.pkg` for your Mac from [Releases](https://github.com/ac1982/bdc/releases/latest). It is signed and notarized by Apple. |
 | **Linux · Windows** | Download the archive from [Releases](https://github.com/ac1982/bdc/releases/latest) and put `bdc` on your `PATH`. |
