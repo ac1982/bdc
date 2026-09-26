@@ -1,79 +1,43 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"strings"
-
-	"github.com/chzyer/readline"
+	"sync"
 )
 
-// newLine returns a line editor on the app's terminal: the shell's, or the
-// one questions are asked with outside it.
-func (a *App) newLine(cfg readline.Config) (*readline.Instance, error) {
-	a.keys = newKeyboard(a.stdin)
-	cfg.Stdin, cfg.Stdout, cfg.Stderr = io.NopCloser(a.keys), a.stderr, a.stderr
-	rl, err := readline.NewEx(&cfg)
-	if err != nil {
-		return nil, err
-	}
-	a.line = rl
-	return rl, nil
-}
+// The terminal's input goes to one reader at a time: to a question (ask)
+// while one is asked, else to the shell's line editor, if there is one.
+// Answers are plain lines, edited by the terminal itself: Ctrl-C there is a
+// signal, which cancels the command, and the terminal drops the line typed.
 
-// ask puts a question to the person at the terminal and returns the answer.
-func (a *App) ask(ctx context.Context, question string) (string, error) {
-	if a.line == nil {
-		if _, err := a.newLine(readline.Config{}); err != nil {
-			return "", err
-		}
-	}
-	answer, err := a.readLine(ctx, question)
-	return strings.TrimSpace(answer), err
-}
-
-// readLine reads a line from the terminal after prompt. Ctrl-C is
-// readline.ErrInterrupt, end of input io.EOF. If ctx ends first, the line is
-// ended as if Ctrl-C was typed, dropping what was typed so far, and ctx's
-// error is returned.
-func (a *App) readLine(ctx context.Context, prompt string) (string, error) {
-	type lineRead struct {
-		line string
-		err  error
-	}
-	a.line.SetPrompt(prompt)
-	read := make(chan lineRead, 1)
-	go func() {
-		line, err := a.line.Readline()
-		read <- lineRead{line, err}
-	}()
-	select {
-	case r := <-read:
-		return r.line, r.err
-	case <-ctx.Done():
-		a.keys.ctrlC()
-		<-read
-		return "", ctx.Err()
-	}
-}
-
-// keyboard is the terminal's input as the line editor reads it, into which
-// a Ctrl-C can be typed: that is how a read is ended from outside.
+// keyboard reads the terminal and hands its input on.
 type keyboard struct {
-	keys  chan []byte   // read from the terminal; closed at its end
-	typed chan struct{} // a Ctrl-C typed by ctrlC
-	rest  []byte        // of the last keys, not yet read
+	mu      sync.Mutex
+	asking  bool          // guarded by mu
+	editor  chan []byte   // the shell's line editor reads here; nil outside the shell
+	answers chan []byte   // questions read here
+	ended   chan struct{} // closed when the input ends
+	partial []byte        // of the answers: read, not yet a whole line
 }
 
-func newKeyboard(r io.Reader) *keyboard {
-	k := &keyboard{keys: make(chan []byte), typed: make(chan struct{}, 1)}
+// newKeyboard reads r; withEditor, what is not an answer goes to a line
+// editor (see editorInput), else all is answers.
+func newKeyboard(r io.Reader, withEditor bool) *keyboard {
+	k := &keyboard{answers: make(chan []byte, 64), ended: make(chan struct{})}
+	if withEditor {
+		k.editor = make(chan []byte)
+	}
 	go func() {
-		defer close(k.keys)
+		defer close(k.ended)
 		for {
 			buf := make([]byte, 256)
 			n, err := r.Read(buf)
 			if n > 0 {
-				k.keys <- buf[:n]
+				k.reader() <- buf[:n]
 			}
 			if err != nil {
 				return
@@ -83,27 +47,86 @@ func newKeyboard(r io.Reader) *keyboard {
 	return k
 }
 
-// ctrlC types a Ctrl-C.
-func (k *keyboard) ctrlC() {
-	select {
-	case k.typed <- struct{}{}:
-	default: // one is waiting already
+// reader is where input goes now.
+func (k *keyboard) reader() chan []byte {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.editor != nil && !k.asking {
+		return k.editor
 	}
+	return k.answers
 }
 
-func (k *keyboard) Read(p []byte) (int, error) {
-	if len(k.rest) == 0 {
+func (k *keyboard) setAsking(on bool) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.asking = on
+}
+
+// editorInput is the input of the line editor: what is not an answer.
+func (k *keyboard) editorInput() io.ReadCloser { return &editorInput{k: k} }
+
+type editorInput struct {
+	k    *keyboard
+	rest []byte
+}
+
+func (e *editorInput) Read(p []byte) (int, error) {
+	if len(e.rest) == 0 {
 		select {
-		case b, ok := <-k.keys:
-			if !ok {
-				return 0, io.EOF
-			}
-			k.rest = b
-		case <-k.typed:
-			return copy(p, []byte{readline.CharInterrupt}), nil
+		case e.rest = <-e.k.editor:
+		case <-e.k.ended:
+			return 0, io.EOF
 		}
 	}
-	n := copy(p, k.rest)
-	k.rest = k.rest[n:]
+	n := copy(p, e.rest)
+	e.rest = e.rest[n:]
 	return n, nil
+}
+
+func (e *editorInput) Close() error { return nil }
+
+func (a *App) keyboard() *keyboard {
+	if a.keys == nil {
+		a.keys = newKeyboard(a.stdin, false)
+	}
+	return a.keys
+}
+
+// ask puts a question to the person at the terminal and returns the answer:
+// the next line typed. If ctx ends first (Ctrl-C), what was typed for it is
+// dropped and ctx's error returned; at the end of input, io.EOF.
+func (a *App) ask(ctx context.Context, question string) (string, error) {
+	k := a.keyboard()
+	fmt.Fprint(a.stderr, question)
+	k.setAsking(true)
+	defer k.setAsking(false)
+	for {
+		if i := bytes.IndexByte(k.partial, '\n'); i >= 0 {
+			line := string(k.partial[:i])
+			k.partial = k.partial[i+1:]
+			return strings.TrimSpace(line), nil
+		}
+		select {
+		case b := <-k.answers:
+			k.partial = append(k.partial, b...)
+		case <-ctx.Done():
+			k.partial = nil
+			for len(k.answers) > 0 {
+				<-k.answers
+			}
+			fmt.Fprintln(a.stderr)
+			return "", ctx.Err()
+		case <-k.ended:
+			if len(k.answers) > 0 {
+				continue
+			}
+			if len(k.partial) == 0 {
+				return "", io.EOF
+			}
+			line := string(k.partial)
+			k.partial = nil
+			return strings.TrimSpace(line), nil
+		}
+	}
 }

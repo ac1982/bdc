@@ -17,7 +17,6 @@ import (
 	"syscall"
 
 	"github.com/alecthomas/kong"
-	"github.com/chzyer/readline"
 	"github.com/mattn/go-isatty"
 
 	"github.com/ac1982/baidunetdisk-cli/internal/baidu"
@@ -37,9 +36,8 @@ type App struct {
 	stdout io.Writer
 	stderr io.Writer
 	stdin  *os.File
-	line   *readline.Instance // reads the terminal, see readLine; the shell's own in the shell
-	keys   *keyboard          // what line reads
-	meter  *meter             // the progress of the running transfer, if any
+	keys   *keyboard // the terminal's input, see ask
+	meter  *meter    // the progress of the running transfer, if any
 
 	client    *baidu.Client
 	clientKey string            // what client was built from
@@ -63,11 +61,6 @@ type runner interface {
 func Main(args []string) int {
 	defer func() { stopCassette() }() // set once the client is built
 	app := &App{ctx: context.Background(), json: hasJSONFlag(args), stdout: os.Stdout, stderr: os.Stderr, stdin: os.Stdin}
-	defer func() {
-		if app.line != nil {
-			app.line.Close()
-		}
-	}()
 
 	cfg, err := config.Load()
 	if err != nil {

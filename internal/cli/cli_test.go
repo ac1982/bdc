@@ -682,6 +682,29 @@ func TestAskCancelled(t *testing.T) {
 	}
 }
 
+// A line that ends just as the command is cancelled leaves no Ctrl-C behind
+// to interrupt the next question.
+func TestAskCancelledAfterLine(t *testing.T) {
+	for range 50 {
+		ta := newTestApp(t)
+		r, w, _ := os.Pipe()
+		ta.stdin = r
+		w.WriteString("abc\n")
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		ta.ask(ctx, "? ")
+		w.WriteString("next\n")
+		line, err := ta.ask(context.Background(), "> ")
+		w.Close()
+		if err == nil && line == "abc" { // the first question returned before reading its line
+			line, err = ta.ask(context.Background(), "> ")
+		}
+		if line != "next" || err != nil {
+			t.Fatalf("next line %q, %v", line, err)
+		}
+	}
+}
+
 // While a dialog holds the meter, transfers go on; their lines wait.
 func TestMeterHold(t *testing.T) {
 	ta := newTestApp(t)

@@ -21,7 +21,11 @@ import (
 // shell reads commands from the terminal until exit, quit or Ctrl-D.
 func (a *App) shell() int {
 	dir, _ := config.Dir()
-	rl, err := a.newLine(readline.Config{
+	a.keys = newKeyboard(a.stdin, true) // questions during a command are answered around the editor
+	rl, err := readline.NewEx(&readline.Config{
+		Stdin:                  a.keys.editorInput(),
+		Stdout:                 a.stderr,
+		Stderr:                 a.stderr,
 		Prompt:                 a.prompt(),
 		HistoryFile:            filepath.Join(dir, "history"),
 		DisableAutoSaveHistory: true, // saved below, but never a login: it holds the cookies
@@ -32,10 +36,11 @@ func (a *App) shell() int {
 	if err != nil {
 		return a.report("", nil, err)
 	}
-	defer rl.Close() // questions during a command are asked with it too
+	defer rl.Close()
 	fmt.Fprintln(a.stderr, "bdc", Version, "交互模式. 输入 help 查看命令, exit 退出. Tab 补全命令和网盘路径.")
 	for {
-		line, err := a.readLine(context.Background(), a.prompt())
+		rl.SetPrompt(a.prompt())
+		line, err := rl.Readline()
 		if errors.Is(err, readline.ErrInterrupt) {
 			continue
 		}
