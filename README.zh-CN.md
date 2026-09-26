@@ -1,96 +1,144 @@
-# bdc
+# bdc — 为 AI agent 打造的百度网盘命令行
 
 <p><a href="README.md">English</a> · <bdi><strong>简体中文</strong></bdi></p>
 
-百度网盘的命令行客户端, 为人和 AI agent 而生: macOS, Linux, Windows 上各一个二进制; `--json` 时每条命令输出一份 JSON 文档; 退出码有意义; 没有终端时从不等待输入.
+<p align="center"><img src="docs/images/hero.png" alt="bdc: AI agent 在终端里操作百度网盘" width="820"></p>
 
-```
-$ bdc ls /Photos
--       2026-09-25 22:12:39  2026-09/
-3.00MB  2026-09-25 22:12:40  IMG_0142.jpg
-共 1 个文件 (3.00MB), 1 个目录
+**bdc** 即 **B**ai**d**u Netdisk **C**LI: [百度网盘](https://pan.baidu.com)的命令行客户端, 单个可执行文件, 支持 macOS、Linux、Windows.
 
-$ bdc download -o ~/Downloads "/Photos/*.jpg"
-已下载 /Photos/IMG_0142.jpg → /Users/me/Downloads/IMG_0142.jpg
-下载结束: 已下载 1; 传输 3.00MB
+人可以用, 但它首先是为 AI agent (Claude Code、Codex 或任何会调用工具的大模型) 设计的. agent 可以独立完成这些事:
+- 找文件、看元数据;
+- 下载、上传整个目录;
+- 整理文件, 分享链接, 转存别人的分享.
+
+整个过程不用解析网页, 不用猜测文本输出, 也不会被一个提示卡住.
+
+```console
+$ bdc ls --json /Photos
+{
+  "command": "ls",
+  "files": [
+    {"ctime": "2026-09-25T22:12:40+08:00", "fsId": 1043012566118829, "isDir": false,
+     "md5": "b1946ac92492d2347c6235b4d2611184", "mtime": "2026-09-25T22:12:40+08:00",
+     "name": "IMG_0142.jpg", "path": "/Photos/IMG_0142.jpg", "size": 3145728}
+  ],
+  "ok": true
+}
+
+$ bdc download --json -o ~/Downloads "/Photos/*.jpg"
+{
+  "command": "download",
+  "files": [
+    {"file": "/Users/me/Downloads/IMG_0142.jpg", "path": "/Photos/IMG_0142.jpg",
+     "size": 3145728, "status": "downloaded"}
+  ],
+  "ok": true,
+  "summary": {"downloaded": 1}
+}
 ```
+
+## 为什么适合 agent
+
+| agent 需要 | bdc 的做法 |
+|---|---|
+| 能解析的输出 | `--json` 时 stdout **只有一份 JSON 文档**: 键有序, 大小以字节计, 时间为 RFC 3339, id 是精确整数. 进度和日志走 stderr. |
+| 知道哪里错了 | 失败时有 `error: {kind, message, exitCode, code?}` 和[有含义的退出码](#退出码): 输入有误 (改参数)、未登录 (去登录)、服务器失败 (稍后重试) 等. |
+| 永远不会卡住 | 没有终端时从不等待输入. 危险操作需要 `-y`, 缺了 `-y` 立即报用法错误, 不会停下来提问. |
+| 保留部分进度 | 失败前已完成的工作仍在文档里: 传输中的每个文件都单独列出 `status`. |
+| 可以放心重试 | 对已存在的目录 `mkdir` 算成功, 已存在的文件标为 `skipped`. 中断的下载和上传从断点继续. |
+| 不用猜路径 | 下载结果给出每个文件的本地绝对路径 (`files[].file`). 通配符由 bdc 按网盘上实际存在的文件展开, 一个都没匹配到就报输入错误. |
+| 只在必要时找人 | 百度风控要求安全验证 (错误码 132) 时, 没有终端的 agent 得到 `auth`/`132`. 这时你在终端里运行同一条命令, bdc 会问验证码发到哪 (短信或邮箱), 你输入验证码后它继续执行. |
+| 少踩百度的坑 | bdc 按真实浏览器中观察到的方式, 说**网页版客户端**的接口. 文件操作以后台任务确认结果, 复制等操作真正完成了才会报告成功. |
+
+**把说明书交给 agent:** [llms.txt](llms.txt) 是写给大模型的精简指南, 包括快速上手、输出格式、退出码和每个命令的规则. 例如在 `AGENTS.md` 或 `CLAUDE.md` 里加一行:
+
+```text
+操作百度网盘时用 `bdc` 并加 `--json`; 先读 https://github.com/ac1982/bdc/blob/main/llms.txt
+```
+
+## 功能
+
+| 类别 | 命令 | 说明 |
+|---|---|---|
+| 帐号 | `login`, `logout`, `who`, `users`, `su`, `quota` | 用浏览器的 Cookie 登录: 从 Chrome/Edge 读取 (`--from-chrome`), 或用 `--cookies` 粘贴. 可保存多个帐号, 用 `su` 切换. |
+| 浏览 | `ls`, `tree`, `meta`, `search`, `cd`, `pwd` | `ls -l` 显示 `fsId` 和 md5. 只有确实是文件内容的 md5 时才给出 `md5`. `search -r` 搜索整个子目录. 相对路径基于 `cd` 设定的目录. |
+| 整理 | `mkdir`, `cp`, `mv`, `rm` | 支持通配符批量操作, 自动创建缺少的上级目录. `rm` 移入回收站, 每一项都报告是否完成. |
+| 回收站 | `recycle list`, `recycle restore`, `recycle delete` | 按 `fsId` 还原. 彻底删除需要 `-y`. |
+| 下载 | `download [-o 目录] [-p 连接数] [--overwrite]` | 目录递归下载, 每个文件多连接分段下载. 通过 `.bdc-part` 断点续传, 并核对远端版本. 已存在的文件跳过. |
+| 上传 | `upload [--policy skip\|overwrite\|rsync] <本地…> <目录>` | 目录递归上传, 4 MiB 分块并行. 百度已有的内容秒传 (`status: "rapid"`). 支持断点续传. |
+| 分享 | `share create`, `share list`, `share cancel`, `share save` | 创建带提取码和有效期的链接. `share save "<链接>?pwd=…" --to /目录` 把别人的分享转存到自己的网盘. |
+| 离线下载 | `offline add`, `offline list`, `offline cancel`, `offline delete` | 百度服务器把 URL 或磁力链接下载到你的网盘. |
+| 设置 | `config`, `config set`, `config reset` | 保存目录、连接数、并行文件数、限速、代理 (http/https/socks5). |
+| 交互模式 | 在终端里不带参数运行 `bdc` | 命令历史, Tab 补全命令和网盘路径, 在终端里完成百度的安全验证. |
+| 自更新 | `update [--check]` | 安装适合本机的最新 GitHub Release. |
+
+每个命令用 `bdc <命令> --help` 查看参数 (加 `--json` 时也以 JSON 输出).
 
 ## 安装
 
-从 [Releases](../../releases) 下载对应系统的压缩包, 把 `bdc` 放到 `PATH` 中; 或者自己编译:
-
 ```sh
-go install github.com/ac1982/baidunetdisk-cli@latest   # Go 1.26+; 二进制名为 baidunetdisk-cli
-go build -o bdc .                                       # 在克隆的仓库中
+go install github.com/ac1982/bdc@latest    # 需要 Go 1.26+
 ```
 
-之后用 `bdc update` 安装新版本.
+或者在 [Releases](../../releases) 发布后下载对应系统的压缩包, 把 `bdc` 放进 `PATH`. `bdc update` 会安装更新的版本.
 
 ## 登录
 
 ```sh
-bdc login --from-chrome              # 或 --from-edge; 其他用户配置用 --profile "Profile 1"
-bdc login --cookies "BDUSS=…; STOKEN=…"
-bdc who
+bdc login --from-chrome                 # 或 --from-edge; 其他配置用 --profile "Profile 1"
+bdc login --cookies "BDUSS=…; STOKEN=…"  # 在 pan.baidu.com 的开发者工具里复制
+bdc who --json
 ```
 
-macOS 上 `--from-chrome` 需要在 系统设置 → 隐私与安全性 → 完全磁盘访问权限 中允许终端程序. 也可以在浏览器开发者工具中复制 pan.baidu.com 的 Cookie; 转存别人的分享需要 `STOKEN`.
+在 macOS 上, `--from-chrome` 需要给终端"完全磁盘访问权限". 转存别人的分享需要 `STOKEN`. bdc 从不打印 Cookie, 交互模式的历史里也从不保存 `login` 那一行.
 
-## 使用
+## 自己用
 
 ```sh
-bdc ls /                                   # 列出目录; -l 显示 fs_id 和 md5; --sort size|time
-bdc tree --depth 2 /文档
-bdc search -r --path / 报告                 # 按文件名搜索
-bdc cd /视频 && bdc pwd                     # 相对路径基于工作目录
-bdc mkdir a/b && bdc cp x.txt a && bdc mv x.txt y.txt && bdc rm "旧-*"
-bdc upload ~/Movies/trip.mp4 ~/Photos /备份            # 目录递归上传
-bdc download -o ~/Downloads /备份/Photos               # 目录递归下载
-bdc share create --days 7 /视频/trip.mp4               # 显示链接和提取码
-bdc share save "https://pan.baidu.com/s/1xxxx?pwd=abcd" --to /转存
-bdc recycle list && bdc recycle restore <fs_id>
-bdc offline add --to /下载 "magnet:?xt=…"
+bdc ls /                                        # 给人看的输出是中文; JSON 与语言无关
+bdc tree --depth 2 /Documents
+bdc search -r --path / report
+bdc mkdir a/b && bdc cp x.txt a && bdc mv x.txt y.txt && bdc rm "old-*"
+bdc upload ~/Movies/trip.mp4 ~/Photos /Backup
+bdc download -o ~/Downloads /Backup/Photos
+bdc share create --days 7 /Videos/trip.mp4       # 输出链接和提取码
+bdc share save "https://pan.baidu.com/s/1xxxx?pwd=abcd" --to /Saved
+bdc offline add --to /Downloads "magnet:?xt=…"
 bdc config set --connections 16 --download-limit 10MB
 ```
 
-在终端中不带参数运行 `bdc` 进入交互模式, 有历史记录, Tab 补全网盘路径. `bdc <命令> --help` 说明每个选项.
+## 退出码
 
-传输可断点续传: 中断的下载或上传, 再次运行同一命令时从中断处继续. 已存在的文件默认跳过 (下载用 `--overwrite`, 上传用 `--policy overwrite|rsync` 改变). 百度已有的内容秒传.
-
-## 给 AI agent 和脚本
-
-完整说明见 [llms.txt](llms.txt). 简要:
-
-- `--json` (放在命令前后都可以) 使 stdout 只输出一份 JSON 文档, 含 `ok`, `command`, 失败时含 `error: {kind, message, exitCode, code?}`. 进度和日志在 stderr. 失败之前完成的部分仍在文档中.
-- 没有终端时不会等待输入: `logout`, `recycle delete`, `update` 需要 `-y`.
-- 百度要求安全验证时 (错误码 132, 比如连续删除之后), 在终端里 bdc 会列出帐号可用的验证方式 (百度登记的手机或邮箱),
-  发送验证码并让你输入, 通过后继续执行; 没有终端时以退出码 4 结束.
-- 退出码:
-
-| 退出码 | `error.kind` | 含义 |
-|---|---|---|
-| 0 | | 成功 |
-| 1 | `failed` | 服务器, 网络或传输失败 |
-| 2 | `input` | 不存在, 已存在, 通配符无匹配, 提取码错误 |
-| 3 | `dependency` | 无法读取浏览器的 Cookie (权限) |
-| 4 | `auth` | 未登录或登录过期 |
-| 64 | `usage` | 命令行有误, 或没有终端时需要确认 |
-| 130 | `cancelled` | 已中断 |
+| 退出码 | `error.kind` | 含义 | agent 应该怎么做 |
+|---|---|---|---|
+| 0 | | 完成 | 读取字段 |
+| 1 | `failed` | 服务器、网络或传输失败 | 稍后重试; 传输会续传 |
+| 2 | `input` | 不存在、已存在、通配符无匹配、提取码错误 | 修正输入; 用 `bdc ls --json` 查看 |
+| 3 | `dependency` | 读不到浏览器 Cookie (权限) | 改用 `--cookies` 登录 |
+| 4 | `auth` | 未登录或登录已过期; `code` 为 132 时是安全验证 | `bdc login`; 132 时请用户在终端里运行该命令 |
+| 64 | `usage` | 命令行有误, 或没有终端却需要确认 | 查看 `--help`; 加 `-y` |
+| 130 | `cancelled` | 已取消 | 重新运行 |
 
 ## 配置
 
-设置和帐号保存在用户配置目录的 `config.json` 中 (macOS 为 `~/Library/Application Support/bdc`, Linux 为 `~/.config/bdc`, Windows 为 `%AppData%\bdc`), 或 `$BDC_CONFIG_DIR`. `bdc config` 显示设置, 从不显示登录的 Cookie.
+设置和帐号保存在用户配置目录的 `config.json` 中, 也可以用 `$BDC_CONFIG_DIR` 指定:
+- macOS: `~/Library/Application Support/bdc`
+- Linux: `~/.config/bdc`
+- Windows: `%AppData%\bdc`
+
+`bdc config --json` 显示设置和路径, 从不显示登录 Cookie.
 
 ## 开发
 
 ```sh
-go vet ./... && go test -race ./...    # 单元测试和离线的端到端回放
-go test ./e2e -record                  # 用真实帐号重新录制端到端场景 (只动 /bdc-test)
-BDC_LIVE_COOKIES="…" go test ./internal/...   # API 客户端和传输的真实帐号测试
+go vet ./... && go test -race ./...            # 单元测试, 内存中的模拟百度, 离线端到端回放
+go test ./e2e -record                          # 用真实帐号重新录制端到端场景 (只动 /bdc-test)
+BDC_LIVE_COOKIES="…" go test ./internal/...    # API 客户端与传输的实网测试
 ```
 
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 是代码的地图; [docs/baidu-api.md](docs/baidu-api.md) 记录百度的接口协议.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 是代码地图.
+- [docs/baidu-api.md](docs/baidu-api.md) 记录了 bdc 所说的网页版协议: 文件、上传与秒传、下载签名、分享、后台任务、短信安全验证.
 
-## 许可
+## 许可证
 
 [MIT](LICENSE)

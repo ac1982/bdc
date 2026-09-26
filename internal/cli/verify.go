@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/ac1982/baidunetdisk-cli/internal/baidu"
+	"github.com/ac1982/bdc/internal/baidu"
 )
 
 // verify passes Baidu's security check with the person at the terminal: they

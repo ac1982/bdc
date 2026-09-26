@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ac1982/baidunetdisk-cli/internal/baidu"
+	"github.com/ac1982/bdc/internal/baidu"
 )
 
 type shareCmd struct {

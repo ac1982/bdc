@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ac1982/baidunetdisk-cli/internal/browser"
-	"github.com/ac1982/baidunetdisk-cli/internal/config"
+	"github.com/ac1982/bdc/internal/browser"
+	"github.com/ac1982/bdc/internal/config"
 )
 
 type loginCmd struct {

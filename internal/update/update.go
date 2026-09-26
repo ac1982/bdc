@@ -23,7 +23,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const repo = "ac1982/baidunetdisk-cli"
+const repo = "ac1982/bdc"
 
 // Release is a published version with the archive for this platform.
 type Release struct {

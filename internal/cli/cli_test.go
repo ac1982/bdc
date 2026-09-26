@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ac1982/baidunetdisk-cli/internal/baidutest"
-	"github.com/ac1982/baidunetdisk-cli/internal/config"
+	"github.com/ac1982/bdc/internal/baidutest"
+	"github.com/ac1982/bdc/internal/config"
 )
 
 // testApp is an App logged in to a fake Baidu, with its own config dir.

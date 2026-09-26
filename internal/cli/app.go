@@ -19,8 +19,8 @@ import (
 	"github.com/alecthomas/kong"
 	"github.com/mattn/go-isatty"
 
-	"github.com/ac1982/baidunetdisk-cli/internal/baidu"
-	"github.com/ac1982/baidunetdisk-cli/internal/config"
+	"github.com/ac1982/bdc/internal/baidu"
+	"github.com/ac1982/bdc/internal/config"
 )
 
 // Version is set at build time with -ldflags "-X ...cli.Version=v1.2.3".

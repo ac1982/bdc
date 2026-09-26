@@ -13,7 +13,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/ac1982/baidunetdisk-cli/internal/baidutest"
+	"github.com/ac1982/bdc/internal/baidutest"
 )
 
 func TestDecode(t *testing.T) {

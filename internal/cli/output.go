@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/ac1982/baidunetdisk-cli/internal/baidu"
+	"github.com/ac1982/bdc/internal/baidu"
 )
 
 // Result is what a command did. Its exported fields, through their json tags,

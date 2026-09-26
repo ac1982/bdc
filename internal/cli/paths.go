@@ -8,7 +8,7 @@ import (
 
 	"golang.org/x/text/unicode/norm"
 
-	"github.com/ac1982/baidunetdisk-cli/internal/baidu"
+	"github.com/ac1982/bdc/internal/baidu"
 )
 
 func hasGlob(p string) bool { return strings.ContainsAny(p, `*?[\`) }

@@ -5,8 +5,8 @@ import (
 	"net/url"
 	"slices"
 
-	"github.com/ac1982/baidunetdisk-cli/internal/baidu"
-	"github.com/ac1982/baidunetdisk-cli/internal/config"
+	"github.com/ac1982/bdc/internal/baidu"
+	"github.com/ac1982/bdc/internal/config"
 )
 
 // newClient builds the Baidu client for an account, honouring the proxy

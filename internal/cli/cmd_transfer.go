@@ -16,9 +16,9 @@ import (
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 
-	"github.com/ac1982/baidunetdisk-cli/internal/baidu"
-	"github.com/ac1982/baidunetdisk-cli/internal/config"
-	"github.com/ac1982/baidunetdisk-cli/internal/transfer"
+	"github.com/ac1982/bdc/internal/baidu"
+	"github.com/ac1982/bdc/internal/config"
+	"github.com/ac1982/bdc/internal/transfer"
 )
 
 // item is one file of a download or upload and what happened to it.

@@ -15,7 +15,7 @@ import (
 	"github.com/ergochat/readline"
 	"github.com/kballard/go-shellquote"
 
-	"github.com/ac1982/baidunetdisk-cli/internal/config"
+	"github.com/ac1982/bdc/internal/config"
 )
 
 // shell reads commands from the terminal until exit, quit or Ctrl-D.

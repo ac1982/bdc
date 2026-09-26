@@ -4,7 +4,7 @@ package main
 import (
 	"os"
 
-	"github.com/ac1982/baidunetdisk-cli/internal/cli"
+	"github.com/ac1982/bdc/internal/cli"
 )
 
 func main() {

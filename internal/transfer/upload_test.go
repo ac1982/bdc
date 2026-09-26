@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ac1982/baidunetdisk-cli/internal/baidu"
+	"github.com/ac1982/bdc/internal/baidu"
 )
 
 // fakeUploader stores blocks in memory and assembles the file on create.

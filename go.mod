@@ -1,4 +1,4 @@
-module github.com/ac1982/baidunetdisk-cli
+module github.com/ac1982/bdc
 
 go 1.26.0
 

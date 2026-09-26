@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ac1982/baidunetdisk-cli/internal/baidu"
+	"github.com/ac1982/bdc/internal/baidu"
 )
 
 // TestLive exercises the write paths against Baidu with a real account, only

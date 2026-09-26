@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ac1982/baidunetdisk-cli/internal/config"
+	"github.com/ac1982/bdc/internal/config"
 )
 
 var (
