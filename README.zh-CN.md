@@ -114,7 +114,7 @@ bdc config set --connections 16 --download-limit 10MB
 | 0 | | 完成 | 读取字段 |
 | 1 | `failed` | 服务器、网络或传输失败 | 稍后重试; 传输会续传 |
 | 2 | `input` | 不存在、已存在、通配符无匹配、提取码错误 | 修正输入; 用 `bdc ls --json` 查看 |
-| 3 | `dependency` | 读不到浏览器 Cookie (权限) | 改用 `--cookies` 登录 |
+| 3 | `dependency` | 权限问题: 读不到浏览器 Cookie, 或 `update` 不能写入 bdc 所在目录 | 改用 `--cookies` 登录; `update` 时请用户运行 `sudo bdc update` |
 | 4 | `auth` | 未登录或登录已过期; `code` 为 132 时是安全验证 | `bdc login`; 132 时请用户在终端里运行该命令 |
 | 64 | `usage` | 命令行有误, 或没有终端却需要确认 | 查看 `--help`; 加 `-y` |
 | 130 | `cancelled` | 已取消 | 重新运行 |

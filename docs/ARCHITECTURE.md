@@ -79,7 +79,7 @@ Errors map to exit codes in one place (`exit.go`):
 | 0 | – | done |
 | 1 | failed | server, network, transfer |
 | 2 | input | not found, exists, no wildcard match, bad link or code |
-| 3 | dependency | missing tool or permission for browser login |
+| 3 | dependency | a permission problem: browser cookies unreadable, or `update` cannot write to its directory |
 | 4 | auth | not logged in, login expired |
 | 64 | usage | bad command line; interaction needed without a terminal |
 | 130 | cancelled | interrupted |

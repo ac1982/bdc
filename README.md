@@ -114,7 +114,7 @@ bdc config set --connections 16 --download-limit 10MB
 | 0 | | done | read the fields |
 | 1 | `failed` | server, network or transfer failure | retry later; transfers resume |
 | 2 | `input` | not found, already exists, no wildcard match, wrong extraction code | fix the input; `bdc ls --json` to look around |
-| 3 | `dependency` | browser cookies unreadable (permissions) | log in with `--cookies` |
+| 3 | `dependency` | a permission problem: browser cookies unreadable, or `update` cannot write to bdc's directory | log in with `--cookies`; for `update`, ask the user to run `sudo bdc update` |
 | 4 | `auth` | not logged in or login expired; with `code` 132, a security check | `bdc login`; for 132, ask the user to run the command in a terminal |
 | 64 | `usage` | bad command line, or a confirmation needed without a terminal | see `--help`; add `-y` |
 | 130 | `cancelled` | interrupted | rerun |
