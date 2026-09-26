@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"sync"
+	"time"
 
 	"github.com/mattn/go-isatty"
 )
@@ -26,6 +28,7 @@ type keyboard struct {
 	changed chan struct{} // closed and replaced on every change below
 	buf     []byte        // read, not yet taken
 	ended   bool          // the input ended
+	asked   bool          // the terminal was asked where the cursor is, and has not said
 }
 
 func newKeyboard(in *os.File) *keyboard {
@@ -81,6 +84,49 @@ func (k *keyboard) discard() {
 	k.buf = nil
 }
 
+// The line editor asks the terminal where the cursor is before each prompt
+// and waits for the answer. Not every terminal answers (TERM=dumb, Emacs'
+// shell): then one is made up, the top left corner, after a short while.
+var (
+	cursorQuery  = []byte("\x1b[6n")
+	cursorReport = regexp.MustCompile(`\x1b\[\d+;\d+R`)
+)
+
+const cursorWait = 250 * time.Millisecond
+
+// editorOutput is the output of the line editor, w, watched for questions
+// to the terminal.
+func (k *keyboard) editorOutput(w io.Writer) io.Writer { return editorOutput{k, w} }
+
+type editorOutput struct {
+	k *keyboard
+	w io.Writer
+}
+
+func (o editorOutput) Write(p []byte) (int, error) {
+	if bytes.Contains(p, cursorQuery) {
+		o.k.awaitCursor()
+	}
+	return o.w.Write(p)
+}
+
+// awaitCursor notes a cursor query: until its answer, the editor gets only
+// the answer (it would keep whatever else it read meanwhile), and one is
+// made up unless it comes soon.
+func (k *keyboard) awaitCursor() {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.asked = true
+	time.AfterFunc(cursorWait, func() {
+		k.mu.Lock()
+		defer k.mu.Unlock()
+		if k.asked && !cursorReport.Match(k.buf) {
+			k.buf = append(k.buf, "\x1b[1;1R"...)
+			k.notify()
+		}
+	})
+}
+
 // editorInput is the input of the shell's line editor, which reads only
 // while it reads a command line (as it asks for keys); what is typed
 // meanwhile is left for the command's questions or the next line.
@@ -94,7 +140,15 @@ func (e editorInput) Read(p []byte) (int, error) {
 	k := e.k
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	k.wait(context.Background(), func() bool { return len(k.buf) > 0 || k.ended })
+	k.wait(context.Background(), func() bool {
+		return k.ended || !k.asked && len(k.buf) > 0 || k.asked && cursorReport.Match(k.buf)
+	})
+	if loc := cursorReport.FindIndex(k.buf); k.asked && loc != nil { // the answer, from among what was typed
+		n := copy(p, k.buf[loc[0]:loc[1]]) // p is the editor's buffer: an answer fits
+		k.buf = append(k.buf[:loc[0]:loc[0]], k.buf[loc[1]:]...)
+		k.asked = false
+		return n, nil
+	}
 	if len(k.buf) == 0 {
 		return 0, io.EOF
 	}

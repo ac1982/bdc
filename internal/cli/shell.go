@@ -23,7 +23,7 @@ func (a *App) shell() int {
 	dir, _ := config.Dir()
 	rl, err := readline.NewFromConfig(&readline.Config{
 		Stdin:                  a.keyboard().editorInput(), // shared with the questions commands ask
-		Stdout:                 a.stderr,
+		Stdout:                 a.keyboard().editorOutput(a.stderr),
 		Stderr:                 a.stderr,
 		HistoryFile:            filepath.Join(dir, "history"),
 		DisableAutoSaveHistory: true, // saved below, but never a login: it holds the cookies

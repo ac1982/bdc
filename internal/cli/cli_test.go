@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -801,5 +802,46 @@ func TestShellEditorLifetime(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if after := runtime.NumGoroutine(); after > before+5 {
 		t.Errorf("goroutines %d → %d", before, after)
+	}
+}
+
+// A terminal that does not answer the editor's cursor query gets an answer
+// made up; one that answers does not.
+func TestCursorQuery(t *testing.T) {
+	for _, answers := range []bool{false, true} {
+		r, w, _ := os.Pipe()
+		ta := newTestApp(t)
+		ta.stdin = r
+		k := ta.keyboard()
+		k.editorOutput(io.Discard).Write([]byte(" \b\x1b[6n"))
+		if answers {
+			w.WriteString("\x1b[12;3R")
+		}
+		time.Sleep(2 * cursorWait)
+		buf := make([]byte, 64)
+		n, _ := k.editorInput().Read(buf)
+		if want := map[bool]string{false: "\x1b[1;1R", true: "\x1b[12;3R"}[answers]; string(buf[:n]) != want {
+			t.Errorf("answers %v: editor read %q", answers, buf[:n])
+		}
+		w.Close()
+	}
+}
+
+// While the terminal is asked where the cursor is, the editor gets only the
+// answer, not the lines pasted meanwhile (it would keep them).
+func TestCursorQueryWithPaste(t *testing.T) {
+	r, w, _ := os.Pipe()
+	defer w.Close()
+	ta := newTestApp(t)
+	ta.stdin = r
+	k := ta.keyboard()
+	k.editorOutput(io.Discard).Write([]byte("\x1b[6n"))
+	w.WriteString("login\ninvalid\n\x1b[5;1R")
+	buf := make([]byte, 4096)
+	if n, _ := k.editorInput().Read(buf); string(buf[:n]) != "\x1b[5;1R" {
+		t.Fatalf("editor read %q", buf[:n])
+	}
+	if n, _ := k.editorInput().Read(buf); string(buf[:n]) != "login\n" {
+		t.Errorf("then %q", buf[:n])
 	}
 }
