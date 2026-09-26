@@ -27,7 +27,7 @@ $ bdc upload --json ~/Photos/2026 /Backup
 {"ok": true, "summary": {"rapid": 37, "uploaded": 212}, "files": [ … ]}
 
 $ bdc share create --json --days 7 /Backup/2026
-{"ok": true, "link": "https://pan.baidu.com/s/1AbCdEf", "pwd": "k7x2", "url": "https://pan.baidu.com/s/1AbCdEf?pwd=k7x2", … }
+{"ok": true, "url": "https://pan.baidu.com/s/1AbCdEf?pwd=k7x2", "pwd": "k7x2", … }
 ```
 
 > **Agent:** Done. 249 photos are in `/Backup/2026`; 37 of them were already stored on Baidu and went up instantly. Here's the link: https://pan.baidu.com/s/1AbCdEf?pwd=k7x2 (valid for 7 days).
@@ -86,7 +86,8 @@ bdc login --from-chrome        # or --from-edge, or paste cookies at the prompt 
 Add one line to your `AGENTS.md` or `CLAUDE.md`:
 
 ```text
-For Baidu Netdisk, use `bdc` with `--json`. Read https://github.com/ac1982/bdc/blob/main/llms.txt first.
+For Baidu Netdisk, use `bdc --json`.
+Read https://github.com/ac1982/bdc/blob/main/llms.txt first.
 ```
 
 [`llms.txt`](llms.txt) is a short manual written for models: the output format, what each exit code means, and the rules for every command.

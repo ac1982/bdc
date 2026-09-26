@@ -27,7 +27,7 @@ $ bdc upload --json ~/Photos/2026 /Backup
 {"ok": true, "summary": {"rapid": 37, "uploaded": 212}, "files": [ … ]}
 
 $ bdc share create --json --days 7 /Backup/2026
-{"ok": true, "link": "https://pan.baidu.com/s/1AbCdEf", "pwd": "k7x2", "url": "https://pan.baidu.com/s/1AbCdEf?pwd=k7x2", … }
+{"ok": true, "url": "https://pan.baidu.com/s/1AbCdEf?pwd=k7x2", "pwd": "k7x2", … }
 ```
 
 > **Agent:** 完成了. 249 张照片已在 `/Backup/2026`, 其中 37 张百度已有, 瞬间秒传. 分享链接: https://pan.baidu.com/s/1AbCdEf?pwd=k7x2 (7 天内有效).
@@ -86,7 +86,8 @@ bdc login --from-chrome        # 或 --from-edge; 也可以运行 bdc login 后�
 在 `AGENTS.md` 或 `CLAUDE.md` 里加一行:
 
 ```text
-操作百度网盘时用 `bdc` 并加 `--json`; 先读 https://github.com/ac1982/bdc/blob/main/llms.txt
+操作百度网盘时用 `bdc --json`.
+先读 https://github.com/ac1982/bdc/blob/main/llms.txt
 ```
 
 [`llms.txt`](llms.txt) 是写给大模型的简明手册, 包括输出格式、每个退出码的含义和每个命令的规则.
