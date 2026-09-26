@@ -80,7 +80,7 @@ Every command documents its flags with `bdc <command> --help` (also as JSON with
 go install github.com/ac1982/bdc@latest    # Go 1.26+
 ```
 
-Or download an archive for your system from [Releases](../../releases), when one is published, and put `bdc` on your `PATH`. `bdc update` installs newer releases.
+Or download a build from [Releases](../../releases). On macOS, the `.pkg` installer is signed with a Developer ID and notarized by Apple, and installs `bdc` into `/usr/local/bin`. The `.tar.gz` archives, for every system, hold the same binary: put it on your `PATH`. `bdc update` installs newer releases.
 
 ## Log in
 

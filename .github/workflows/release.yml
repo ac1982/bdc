@@ -1,24 +1,72 @@
 name: release
 
+# A v* tag builds every platform, signs and notarizes the macOS builds, and
+# publishes the release. Run it by hand to try the whole build and signing
+# without publishing anything.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version for a trial build (not published)"
+        default: "v0.0.0-trial"
 
 permissions:
   contents: write
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
     steps:
       - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - uses: goreleaser/goreleaser-action@v6
-        with:
-          args: release --clean
+      - name: Test
+        run: go test ./...
+      - name: Build, sign and notarize
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MACOS_APPLICATION_P12_BASE64: ${{ secrets.MACOS_APPLICATION_P12_BASE64 }}
+          MACOS_INSTALLER_P12_BASE64: ${{ secrets.MACOS_INSTALLER_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # Archives are named bdc-<version>-<os>-<arch>; `bdc update` looks for exactly that.
+          for target in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
+            os=${target%/*}; arch=${target#*/}
+            name="bdc-${VERSION}-${os}-${arch}"
+            bin=bdc; [ "$os" = windows ] && bin=bdc.exe
+            mkdir -p "build/$name"
+            CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath \
+              -ldflags "-s -w -X github.com/ac1982/bdc/internal/cli.Version=${VERSION}" -o "build/$name/$bin" .
+            cp LICENSE README.md README.zh-CN.md llms.txt "build/$name/"
+            if [ "$os" = darwin ]; then
+              scripts/sign-macos.sh "build/$name/$bin" "dist/$name.pkg" "$VERSION"
+            fi
+            if [ "$os" = windows ]; then
+              (cd build && zip -qr "../dist/$name.zip" "$name")
+            else
+              tar -C build -czf "dist/$name.tar.gz" "$name"
+            fi
+          done
+          (cd dist && shasum -a 256 * > checksums.txt)
+      - name: Publish
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$VERSION" dist/* --title "$VERSION" --generate-notes
+      - name: Keep the trial build
+        if: github.event_name != 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bdc-${{ env.VERSION }}
+          path: dist/
+          retention-days: 3

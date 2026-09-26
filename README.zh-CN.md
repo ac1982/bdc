@@ -80,7 +80,7 @@ $ bdc download --json -o ~/Downloads "/Photos/*.jpg"
 go install github.com/ac1982/bdc@latest    # 需要 Go 1.26+
 ```
 
-或者在 [Releases](../../releases) 发布后下载对应系统的压缩包, 把 `bdc` 放进 `PATH`. `bdc update` 会安装更新的版本.
+或者从 [Releases](../../releases) 下载. macOS 的 `.pkg` 安装包用 Developer ID 签名并经过 Apple 公证, 会把 `bdc` 装到 `/usr/local/bin`. 各系统的 `.tar.gz` 压缩包里是同一个程序, 放进 `PATH` 即可. `bdc update` 会安装更新的版本.
 
 ## 登录
 
