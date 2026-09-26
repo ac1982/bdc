@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <b>让 AI agent 替你打理百度网盘.</b><br>
+  <b>让 AI agent 替你打理百度网盘。</b><br>
   快速、可编程的百度网盘命令行。Claude Code、Codex 以及任何会调用工具的 agent，都能自己查找、整理、传输和分享你的文件。
 </p>
 
@@ -30,7 +30,7 @@ $ bdc share create --json --days 7 /Backup/2026
 {"ok": true, "url": "https://pan.baidu.com/s/1AbCdEf?pwd=k7x2", "pwd": "k7x2", … }
 ```
 
-> **Agent：** 完成了。249 张照片已在 `/Backup/2026`，其中 37 张百度已有，瞬间秒传。分享链接：https://pan.baidu.com/s/1AbCdEf?pwd=k7x2（7 天内有效）。
+> **Agent：** 完成了。249 张照片已在 `/Backup/2026`，其中 37 张百度已有，瞬间秒传。分享链接：<https://pan.baidu.com/s/1AbCdEf?pwd=k7x2>（7 天内有效）。
 
 agent 不用解析网页，也不用猜。每条命令都返回一份 JSON 和一个说明结果的退出码。
 
