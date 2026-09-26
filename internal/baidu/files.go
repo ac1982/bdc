@@ -2,6 +2,7 @@ package baidu
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -13,14 +14,14 @@ import (
 
 // File is a file or directory in the netdisk.
 type File struct {
-	FsID  int64     `json:"fsId"`
+	FsID  int64     `json:"fsId,omitempty"`
 	Path  string    `json:"path"`
 	Name  string    `json:"name"`
 	Size  int64     `json:"size"`
 	IsDir bool      `json:"isDir"`
-	MD5   string    `json:"md5,omitempty"`
-	Ctime time.Time `json:"ctime"`
-	Mtime time.Time `json:"mtime"`
+	MD5   string    `json:"md5,omitempty"` // only when it is the content's md5
+	Ctime time.Time `json:"ctime,omitzero"`
+	Mtime time.Time `json:"mtime,omitzero"`
 }
 
 // rawFile is a file as the list, meta and search endpoints send it.
@@ -49,8 +50,13 @@ func (r rawFile) file() File {
 	if f.Name == "" {
 		f.Name = path.Base(r.Path)
 	}
-	if !f.IsDir {
-		f.MD5 = realMD5(r.MD5, r.BlockList)
+	// Baidu's md5 of a file stored in several blocks is not the content's md5.
+	switch {
+	case f.IsDir:
+	case len(r.BlockList) == 1:
+		f.MD5 = r.BlockList[0]
+	case r.BlockList == nil && r.Size <= 4<<20: // necessarily one block
+		f.MD5 = deobfuscateMD5(r.MD5)
 	}
 	return f
 }
@@ -117,17 +123,27 @@ var SkipDir = errors.New("skip this directory")
 
 // Meta describes one file or directory.
 func (c *Client) Meta(ctx context.Context, p string) (File, error) {
-	var resp struct {
-		List []rawFile `json:"list"`
-	}
-	err := c.do(ctx, &request{op: "获取 " + p, url: pcsURL("file", "meta", nil), param: pathList(p)}, &resp)
+	fs, err := c.Metas(ctx, p)
 	if err != nil {
 		return File{}, err
 	}
-	if len(resp.List) == 0 {
-		return File{}, &Error{Op: "获取 " + p, Code: 31066, Message: codeMessage[31066]}
+	return fs[0], nil
+}
+
+// Metas describes several files or directories; all must exist.
+func (c *Client) Metas(ctx context.Context, paths ...string) ([]File, error) {
+	target, _ := json.Marshal(paths)
+	q := url.Values{"target": {string(target)}, "dlink": {"0"}, "blocks": {"1"}}
+	var resp struct {
+		Info []rawFile `json:"info"`
 	}
-	return resp.List[0].file(), nil
+	if err := c.do(ctx, &request{op: "获取 " + describe(paths), url: panBase + "api/filemetas?" + q.Encode(), ua: uaNetdisk}, &resp); err != nil {
+		return nil, err
+	}
+	if len(resp.Info) != len(paths) {
+		return nil, &Error{Op: "获取 " + describe(paths), Message: "服务器返回的条目数不符"}
+	}
+	return files(resp.Info), nil
 }
 
 // Mkdir creates a directory and any missing parents.
@@ -137,16 +153,20 @@ func (c *Client) Mkdir(ctx context.Context, dir string) (File, error) {
 		Ctime int64 `json:"ctime"`
 		Mtime int64 `json:"mtime"`
 	}
-	q := url.Values{"path": {dir}}
-	if err := c.do(ctx, &request{op: "创建目录 " + dir, method: "POST", url: pcsURL("file", "mkdir", q)}, &r); err != nil {
+	form := url.Values{"path": {dir}, "isdir": {"1"}, "rtype": {"0"}}
+	if err := c.do(ctx, &request{op: "创建目录 " + dir, url: panBase + "api/create?a=commit", form: form, ua: uaNetdisk}, &r); err != nil {
 		return File{}, err
 	}
 	return File{FsID: r.FsID, Path: dir, Name: path.Base(dir), IsDir: true, Ctime: time.Unix(r.Ctime, 0), Mtime: time.Unix(r.Mtime, 0)}, nil
 }
 
-// Remove moves files and directories to the recycle bin.
+// Remove moves files and directories to the recycle bin. Every path must
+// exist: Baidu itself would silently accept missing ones.
 func (c *Client) Remove(ctx context.Context, paths ...string) error {
-	return c.do(ctx, &request{op: "删除 " + describe(paths), url: pcsURL("file", "delete", nil), param: pathList(paths...)}, nil)
+	if _, err := c.Metas(ctx, paths...); err != nil {
+		return err
+	}
+	return c.fileManager(ctx, "delete", "删除 "+describe(paths), paths)
 }
 
 // Rename is one source and destination of a copy or move.
@@ -155,29 +175,53 @@ type Rename struct {
 	To   string `json:"to"`
 }
 
-// Copy copies each From to its To (a full destination path).
+// Copy copies each From to its To (a full destination path). Missing
+// parent directories of To are created.
 func (c *Client) Copy(ctx context.Context, pairs ...Rename) error {
-	return c.do(ctx, &request{op: "复制 " + describeFrom(pairs), url: pcsURL("file", "copy", nil), param: map[string]any{"list": pairs}}, nil)
+	return c.fileManager(ctx, "copy", "复制 "+describeFrom(pairs), moves(pairs))
 }
 
 // Move moves or renames each From to its To (a full destination path).
+// Missing parent directories of To are created.
 func (c *Client) Move(ctx context.Context, pairs ...Rename) error {
-	return c.do(ctx, &request{op: "移动 " + describeFrom(pairs), url: pcsURL("file", "move", nil), param: map[string]any{"list": pairs}}, nil)
+	return c.fileManager(ctx, "move", "移动 "+describeFrom(pairs), moves(pairs))
+}
+
+func moves(pairs []Rename) []map[string]string {
+	list := make([]map[string]string, len(pairs))
+	for i, p := range pairs {
+		list[i] = map[string]string{"path": p.From, "dest": path.Dir(p.To), "newname": path.Base(p.To)}
+	}
+	return list
+}
+
+// fileManager runs a batch delete, copy or move; an existing target fails it.
+func (c *Client) fileManager(ctx context.Context, opera, op string, list any) error {
+	data, _ := json.Marshal(list)
+	q := url.Values{"opera": {opera}, "async": {"0"}, "onnest": {"fail"}}
+	return c.do(ctx, &request{op: op, url: panBase + "api/filemanager?" + q.Encode(), form: url.Values{"filelist": {string(data)}}, ua: uaNetdisk}, nil)
 }
 
 // Search finds files under dir whose name contains keyword.
 func (c *Client) Search(ctx context.Context, dir, keyword string, recursive bool) ([]File, error) {
-	q := url.Values{"path": {dir}, "wd": {keyword}}
-	if recursive {
-		q.Set("re", "1")
+	var all []File
+	for page := 1; ; page++ {
+		q := url.Values{"key": {keyword}, "dir": {dir}, "num": {"500"}, "page": {strconv.Itoa(page)}}
+		if recursive {
+			q.Set("recursion", "1")
+		}
+		var resp struct {
+			List    []rawFile `json:"list"`
+			HasMore int       `json:"has_more"`
+		}
+		if err := c.do(ctx, &request{op: "搜索 " + dir, url: panBase + "api/search?" + q.Encode(), ua: uaNetdisk}, &resp); err != nil {
+			return all, err
+		}
+		all = append(all, files(resp.List)...)
+		if resp.HasMore == 0 || len(resp.List) == 0 {
+			return all, nil
+		}
 	}
-	var resp struct {
-		List []rawFile `json:"list"`
-	}
-	if err := c.do(ctx, &request{op: "搜索 " + dir, url: pcsURL("file", "search", q)}, &resp); err != nil {
-		return nil, err
-	}
-	return files(resp.List), nil
 }
 
 // describe names the paths of a batch in an error message.
@@ -194,12 +238,4 @@ func describeFrom(pairs []Rename) string {
 		from[i] = p.From
 	}
 	return describe(from)
-}
-
-func pathList(paths ...string) map[string]any {
-	list := make([]map[string]string, len(paths))
-	for i, p := range paths {
-		list[i] = map[string]string{"path": p}
-	}
-	return map[string]any{"list": list}
 }

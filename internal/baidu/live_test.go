@@ -2,6 +2,7 @@ package baidu
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -42,7 +43,7 @@ func TestLiveReadOnly(t *testing.T) {
 	if _, err := c.List(ctx, "/bnd-test-definitely-missing"); Code(err) != -9 {
 		t.Errorf("List missing: %v", err)
 	}
-	if _, err := c.Meta(ctx, "/bnd-test-definitely-missing"); Code(err) != 31066 {
+	if _, err := c.Meta(ctx, "/bnd-test-definitely-missing"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Meta missing: %v", err)
 	}
 	r, err := c.Recycled(ctx)
@@ -51,6 +52,13 @@ func TestLiveReadOnly(t *testing.T) {
 	t.Logf("Shares: %d, err=%v", len(s), err)
 	o, err := c.OfflineTasks(ctx)
 	t.Logf("OfflineTasks: %d, err=%v", len(o), err)
+	bad, _ := New(nil, "BDUSS=invalid-login-for-test", c.UID)
+	if _, err := bad.Quota(ctx); !errors.Is(err, ErrAuth) {
+		t.Errorf("quota with a bad login: %v", err)
+	}
+	if _, err := bad.Meta(ctx, "/"); !errors.Is(err, ErrAuth) {
+		t.Errorf("meta with a bad login: %v", err)
+	}
 	if strings.Contains(os.Getenv("BND_LIVE"), "verbose") {
 		for _, x := range s {
 			t.Logf("  share %d %s %v", x.ID, x.Link, x.Paths)

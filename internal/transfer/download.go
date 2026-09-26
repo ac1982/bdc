@@ -1,6 +1,7 @@
-// Package transfer moves file data: parallel ranged downloads and chunked
-// uploads, both resumable. It knows nothing about Baidu's API; callers
-// supply URLs and upload functions.
+// Package transfer moves file data between disk and netdisk: parallel ranged
+// downloads and chunked uploads, both resumable. The downloader is generic
+// (callers supply the links); uploads speak Baidu's upload protocol through
+// the Uploader interface.
 package transfer
 
 import (
@@ -9,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -31,7 +33,10 @@ type Download struct {
 	Header http.Header
 	// URLs returns candidate links for the file. It is called again when all
 	// links fail, since they expire.
-	URLs  func(ctx context.Context) ([]string, error)
+	URLs func(ctx context.Context) ([]string, error)
+	// ID identifies this version of the remote file (e.g. fs id and mtime);
+	// a leftover part of a different version is not resumed.
+	ID    string
 	Size  int64
 	Dest  string
 	Conns int
@@ -43,6 +48,7 @@ type Download struct {
 
 // record is the resume state saved beside the part file.
 type record struct {
+	ID   string `json:"id"`
 	Size int64  `json:"size"`
 	Done []bool `json:"done"` // per chunk
 }
@@ -51,7 +57,18 @@ type record struct {
 // An earlier interrupted run of the same file is resumed.
 func (d *Download) Run(ctx context.Context) error {
 	part := d.Dest + PartSuffix
-	f, err := os.OpenFile(part, os.O_RDWR|os.O_CREATE, 0o644)
+	j := &job{Download: d, recPath: part + ".json"}
+	j.rec = d.resumable(part, j.recPath)
+	flags := os.O_RDWR | os.O_CREATE
+	if j.rec == nil {
+		// Start over; drop the old record first so a crash cannot pair it with the new part.
+		if err := os.Remove(j.recPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		j.rec = &record{ID: d.ID, Size: d.Size, Done: make([]bool, d.chunks())}
+		flags |= os.O_TRUNC
+	}
+	f, err := os.OpenFile(part, flags, 0o644)
 	if err != nil {
 		return err
 	}
@@ -59,8 +76,7 @@ func (d *Download) Run(ctx context.Context) error {
 	if err := f.Truncate(d.Size); err != nil {
 		return err
 	}
-	j := &job{Download: d, f: f, recPath: part + ".json"}
-	j.rec = d.loadRecord(j.recPath)
+	j.f = f
 	for i, done := range j.rec.Done {
 		if done && d.Progress != nil {
 			d.Progress(d.chunkLen(i))
@@ -197,8 +213,8 @@ func (d *Download) fetchRange(ctx context.Context, f *os.File, link string, star
 		return 0, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusPartialContent && !(resp.StatusCode == http.StatusOK && start == 0 && end == d.Size) {
-		return 0, fmt.Errorf("下载 %d-%d: HTTP %s", start, end-1, resp.Status)
+	if err := d.checkRange(resp, start, end); err != nil {
+		return 0, err
 	}
 	var body io.Reader = io.LimitReader(resp.Body, end-start)
 	if d.Limit != nil {
@@ -212,19 +228,45 @@ func (d *Download) fetchRange(ctx context.Context, f *os.File, link string, star
 	return n, err
 }
 
+// checkRange accepts only a response carrying exactly bytes [start, end) of
+// a file of the expected size.
+func (d *Download) checkRange(resp *http.Response, start, end int64) error {
+	switch resp.StatusCode {
+	case http.StatusPartialContent:
+		var a, b, total int64
+		if _, err := fmt.Sscanf(resp.Header.Get("Content-Range"), "bytes %d-%d/%d", &a, &b, &total); err != nil ||
+			a != start || b != end-1 || total != d.Size {
+			return fmt.Errorf("下载 %d-%d: 服务器返回了不符的区间 %q", start, end-1, resp.Header.Get("Content-Range"))
+		}
+	case http.StatusOK: // the whole file, when that is what was asked for
+		if start != 0 || end != d.Size || (resp.ContentLength >= 0 && resp.ContentLength != d.Size) {
+			return fmt.Errorf("下载 %d-%d: 服务器返回了整个文件 (%d 字节)", start, end-1, resp.ContentLength)
+		}
+	default:
+		return fmt.Errorf("下载 %d-%d: HTTP %s", start, end-1, resp.Status)
+	}
+	return nil
+}
+
+func (d *Download) chunks() int { return int((d.Size + chunkSize - 1) / chunkSize) }
+
 func (d *Download) chunkLen(i int) int64 {
 	return min(chunkSize, d.Size-int64(i)*chunkSize)
 }
 
-// loadRecord returns the saved record if it belongs to this file, else a fresh one.
-func (d *Download) loadRecord(path string) *record {
-	chunks := int((d.Size + chunkSize - 1) / chunkSize)
+// resumable returns the saved record if it belongs to this version of the
+// file and its part file is intact, or nil to start over.
+func (d *Download) resumable(part, recPath string) *record {
 	var rec record
-	if data, err := os.ReadFile(path); err == nil && json.Unmarshal(data, &rec) == nil &&
-		rec.Size == d.Size && len(rec.Done) == chunks {
-		return &rec
+	data, err := os.ReadFile(recPath)
+	if err != nil || json.Unmarshal(data, &rec) != nil ||
+		rec.ID != d.ID || rec.Size != d.Size || len(rec.Done) != d.chunks() {
+		return nil
 	}
-	return &record{Size: d.Size, Done: make([]bool, chunks)}
+	if fi, err := os.Stat(part); err != nil || fi.Size() != d.Size {
+		return nil
+	}
+	return &rec
 }
 
 type offsetWriter struct {

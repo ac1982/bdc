@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cenkalti/backoff/v5"
@@ -39,7 +40,9 @@ type Client struct {
 
 	http  *http.Client
 	bduss string
-	uk    int64 // cached by UK
+
+	mu sync.Mutex
+	uk int64 // cached by UK
 }
 
 // New returns a client that authenticates with cookies ("BDUSS=…; STOKEN=…; …").
@@ -59,7 +62,8 @@ func New(hc *http.Client, cookies string, uid uint64) (*Client, error) {
 		if ck.Name == "BDUSS" {
 			c.bduss = ck.Value
 		}
-		ck.Domain, ck.Path = ".baidu.com", "/"
+		// Secure: the login never travels over plain HTTP.
+		ck.Domain, ck.Path, ck.Secure = ".baidu.com", "/", true
 	}
 	if c.bduss == "" {
 		return nil, &Error{Op: "登录", Message: "Cookie 中没有 BDUSS", Err: ErrInvalid}
@@ -99,14 +103,18 @@ func (c *Client) do(ctx context.Context, req *request, out any) error {
 			method = http.MethodPost
 		}
 	}
-	send := func() ([]byte, error) {
+	type response struct {
+		status int
+		body   []byte
+	}
+	send := func() (response, error) {
 		var rd io.Reader
 		if body != nil {
 			rd = bytes.NewReader(body)
 		}
 		hr, err := http.NewRequestWithContext(ctx, method, req.url, rd)
 		if err != nil {
-			return nil, backoff.Permanent(err)
+			return response{}, backoff.Permanent(err)
 		}
 		for k, v := range req.header {
 			hr.Header[k] = v
@@ -118,26 +126,26 @@ func (c *Client) do(ctx context.Context, req *request, out any) error {
 		resp, err := c.http.Do(hr)
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil, backoff.Permanent(ctx.Err())
+				return response{}, backoff.Permanent(ctx.Err())
 			}
-			return nil, err
+			return response{}, err
 		}
 		defer resp.Body.Close()
 		data, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return nil, err
+			return response{}, err
 		}
 		if resp.StatusCode >= 500 && method == http.MethodGet {
-			return nil, fmt.Errorf("HTTP %s", resp.Status)
+			return response{}, fmt.Errorf("HTTP %s", resp.Status)
 		}
-		return data, nil
+		return response{resp.StatusCode, data}, nil
 	}
-	var data []byte
+	var resp response
 	if method == http.MethodGet {
-		data, err = backoff.Retry(ctx, send, backoff.WithMaxTries(3),
+		resp, err = backoff.Retry(ctx, send, backoff.WithMaxTries(3),
 			backoff.WithBackOff(&backoff.ExponentialBackOff{InitialInterval: 500 * time.Millisecond, Multiplier: 2, MaxInterval: 4 * time.Second}))
 	} else {
-		data, err = send()
+		resp, err = send()
 	}
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -146,36 +154,56 @@ func (c *Client) do(ctx context.Context, req *request, out any) error {
 		return &Error{Op: req.op, Err: err}
 	}
 	if req.raw {
-		*out.(*[]byte) = data
+		*out.(*[]byte) = resp.body
 		return nil
 	}
-	return decode(req.op, data, out)
+	return decode(req.op, resp.status, resp.body, out)
 }
 
-// decode checks Baidu's two error conventions, then unmarshals into out.
-func decode(op string, data []byte, out any) error {
+// decode turns a response into out or an error: Baidu's own error codes
+// first (PCS error_code, pan errno, and per-item errors of batch calls), then
+// the HTTP status, since a failed call may carry no code at all.
+func decode(op string, status int, data []byte, out any) error {
 	var st struct {
-		ErrorCode flexInt `json:"error_code"` // PCS; tieba sends it as a string
-		ErrorMsg  string  `json:"error_msg"`
-		Errno     flexInt `json:"errno"` // pan
-		ShowMsg   string  `json:"show_msg"`
-		ErrMsg    string  `json:"errmsg"`
+		ErrorCode flexInt         `json:"error_code"` // PCS; tieba sends it as a string
+		ErrorMsg  string          `json:"error_msg"`
+		Errno     flexInt         `json:"errno"` // pan
+		ShowMsg   string          `json:"show_msg"`
+		ErrMsg    string          `json:"errmsg"`
+		Info      json.RawMessage `json:"info"` // per item in batch calls; other shapes elsewhere
 	}
-	if err := json.Unmarshal(data, &st); err != nil {
-		return &Error{Op: op, Message: "无法解析服务器的响应: " + snippet(data), Err: err}
-	}
+	jsonErr := json.Unmarshal(data, &st)
 	code := int(st.ErrorCode)
 	if code == 0 {
 		code = int(st.Errno)
 	}
-	if code != 0 {
+	var items []struct {
+		Errno flexInt `json:"errno"`
+		Path  string  `json:"path"`
+	}
+	if code == errBatch && json.Unmarshal(st.Info, &items) == nil { // a batch call failed; the items say why
+		for _, it := range items {
+			if it.Errno != 0 {
+				code = int(it.Errno)
+				if it.Path != "" {
+					op += " (" + it.Path + ")"
+				}
+				break
+			}
+		}
+	}
+	switch {
+	case code != 0:
 		msg := codeMessage[code]
 		if msg == "" {
 			msg = firstNonEmpty(st.ShowMsg, st.ErrorMsg, st.ErrMsg, "未知错误")
 		}
 		return &Error{Op: op, Code: code, Message: msg}
-	}
-	if out == nil {
+	case status < 200 || status > 299:
+		return &Error{Op: op, Message: fmt.Sprintf("HTTP %d: %s", status, snippet(data))}
+	case jsonErr != nil:
+		return &Error{Op: op, Message: "无法解析服务器的响应: " + snippet(data), Err: jsonErr}
+	case out == nil:
 		return nil
 	}
 	if err := json.Unmarshal(data, out); err != nil {

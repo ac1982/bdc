@@ -30,8 +30,22 @@ type listing struct {
 
 type lsResult struct {
 	Files    []baidu.File `json:"files"`
-	listings []listing
+	listings []listing    // the same files grouped for people
 	long     bool
+}
+
+// add records files listed from dir ("" for files named directly); files
+// named directly are grouped together.
+func (r *lsResult) add(dir string, files ...baidu.File) {
+	if r.Files == nil {
+		r.Files = []baidu.File{}
+	}
+	r.Files = append(r.Files, files...)
+	if n := len(r.listings); dir == "" && n > 0 && r.listings[n-1].Dir == "" {
+		r.listings[n-1].Files = append(r.listings[n-1].Files, files...)
+		return
+	}
+	r.listings = append(r.listings, listing{Dir: dir, Files: files})
 }
 
 func (c *lsCmd) Run(app *App) (Result, error) {
@@ -46,40 +60,32 @@ func (c *lsCmd) Run(app *App) (Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := lsResult{Files: []baidu.File{}, long: c.Long}
-	var loose []baidu.File
+	r := &lsResult{long: c.Long}
 	for _, p := range paths {
-		f, err := stat(app, client, p)
+		f, err := app.stat(client, p)
 		if err != nil {
 			return r, err
 		}
 		if !f.IsDir {
-			loose = append(loose, f)
+			r.add("", f)
 			continue
 		}
 		files, err := client.List(app.ctx, p)
+		c.sort(files)
+		r.add(p, files...)
 		if err != nil {
 			return r, err
 		}
-		c.sort(files)
-		r.listings = append(r.listings, listing{Dir: p, Files: files})
-	}
-	if len(loose) > 0 {
-		c.sort(loose)
-		r.listings = append([]listing{{Files: loose}}, r.listings...)
-	}
-	for _, l := range r.listings {
-		r.Files = append(r.Files, l.Files...)
 	}
 	return r, nil
 }
 
 // stat describes a path; the root, which Baidu cannot describe, is a directory.
-func stat(app *App, client *baidu.Client, p string) (baidu.File, error) {
+func (a *App) stat(client *baidu.Client, p string) (baidu.File, error) {
 	if p == "/" {
 		return baidu.File{Path: "/", Name: "/", IsDir: true}, nil
 	}
-	return client.Meta(app.ctx, p)
+	return client.Meta(a.ctx, p)
 }
 
 func (c *lsCmd) sort(files []baidu.File) {
@@ -100,7 +106,7 @@ func (c *lsCmd) sort(files []baidu.File) {
 	})
 }
 
-func (r lsResult) Human(w io.Writer) {
+func (r *lsResult) Human(w io.Writer) {
 	for i, l := range r.listings {
 		if i > 0 {
 			fmt.Fprintln(w)
@@ -160,7 +166,7 @@ func (c *treeCmd) Run(app *App) (Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	f, err := stat(app, client, app.abs(c.Path))
+	f, err := app.stat(client, app.abs(c.Path))
 	if err != nil {
 		return nil, err
 	}
@@ -311,7 +317,7 @@ func (c *cdCmd) Run(app *App) (Result, error) {
 		return nil, inputf("%s 匹配了多个目录", c.Dir)
 	}
 	dir := dirs[0]
-	f, err := stat(app, client, dir)
+	f, err := app.stat(client, dir)
 	if err != nil {
 		return nil, err
 	}
@@ -340,24 +346,38 @@ type mkdirCmd struct {
 }
 
 type mkdirResult struct {
-	Created []baidu.File `json:"created"`
+	Created  []baidu.File `json:"created"`
+	Existing []string     `json:"existing"` // directories that were already there
 }
 
 func (r mkdirResult) Human(w io.Writer) {
 	for _, f := range r.Created {
 		fmt.Fprintln(w, "已创建", f.Path)
 	}
+	for _, p := range r.Existing {
+		fmt.Fprintln(w, "已存在", p)
+	}
 }
 
+// Run creates each directory; one that already exists is fine, so running
+// it again is safe.
 func (c *mkdirCmd) Run(app *App) (Result, error) {
 	client, err := app.baidu()
 	if err != nil {
 		return nil, err
 	}
-	r := mkdirResult{Created: []baidu.File{}}
+	r := mkdirResult{Created: []baidu.File{}, Existing: []string{}}
 	var errs []error
 	for _, d := range c.Dirs {
-		f, err := client.Mkdir(app.ctx, app.abs(d))
+		p := app.abs(d)
+		f, err := client.Mkdir(app.ctx, p)
+		if errors.Is(err, baidu.ErrExists) {
+			if f, merr := client.Meta(app.ctx, p); merr == nil && f.IsDir {
+				r.Existing = append(r.Existing, p)
+				continue
+			}
+			err = inputf("%s 已存在, 且不是目录", p)
+		}
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -453,11 +473,16 @@ func rename(app *App, args []string, verb string, op renameOp) (Result, error) {
 	}
 
 	r := renameResult{Items: []baidu.Rename{}, verb: verb}
+	seen := map[string]string{}
 	for _, s := range srcs {
 		to := dst
 		if into {
 			to = path.Join(dst, path.Base(s))
 		}
+		if other, dup := seen[to]; dup {
+			return nil, inputf("%s 和 %s 会%s到同一个位置 %s", other, s, verb, to)
+		}
+		seen[to] = s
 		r.Items = append(r.Items, baidu.Rename{From: s, To: to})
 	}
 	if err := op(client, app.ctx, r.Items...); err != nil {

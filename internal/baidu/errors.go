@@ -45,12 +45,16 @@ func Code(err error) int {
 	return 0
 }
 
+// errBatch is the errno of a batch call where some items failed.
+const errBatch = 12
+
 // codeClass maps the codes we understand to a class.
 var codeClass = map[int]error{
 	-6:    ErrAuth,     // 身份验证失败
 	-9:    ErrNotFound, // 文件或目录不存在
 	31066: ErrNotFound, // file does not exist
 	-8:    ErrExists,   // 文件或目录已存在
+	-30:   ErrExists,   // 目标已存在
 	31061: ErrExists,   // file already exists
 	-7:    ErrInvalid,  // 文件名非法
 	-12:   ErrInvalid,  // 提取码错误
@@ -62,6 +66,7 @@ var codeMessage = map[int]string{
 	-6:    "身份验证失败, 请重新登录",
 	-7:    "文件名非法",
 	-8:    "文件或目录已存在",
+	-30:   "目标已存在",
 	-9:    "文件或目录不存在",
 	-12:   "提取码错误",
 	31061: "文件或目录已存在",

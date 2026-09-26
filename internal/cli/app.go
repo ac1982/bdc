@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"path"
@@ -36,7 +37,9 @@ type App struct {
 	stderr io.Writer
 	stdin  *os.File
 
-	client *baidu.Client
+	client    *baidu.Client
+	clientKey string            // what client was built from
+	transport http.RoundTripper // replaces the network in tests
 }
 
 const description = `百度网盘命令行客户端, 为人和 AI agent 而生.
@@ -75,8 +78,10 @@ func Main(args []string) int {
 func (a *App) exec(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	prev := a.ctx
 	a.ctx = ctx
-	a.json = hasJSONFlag(args)
+	defer func() { a.ctx = prev }() // the shell outlives each command
+	a.json = hasJSONFlag(args)      // until parsed, for errors about the command line
 	var root root
 	var help bytes.Buffer
 	parser, err := kong.New(&root,
@@ -110,6 +115,7 @@ func (a *App) exec(args []string) int {
 		return a.report(command, nil, usagef("%v (用 bnd %s --help 查看用法)", err, strings.TrimSpace(command)))
 	}
 
+	a.json = root.JSON
 	cmd, ok := kctx.Selected().Target.Addr().Interface().(runner)
 	if !ok {
 		return a.report(command, nil, usagef("%s 需要子命令, 用 bnd %s --help 查看", command, command))
@@ -177,11 +183,14 @@ func (a *App) baidu() (*baidu.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	if a.client == nil || a.client.UID != acc.UID {
-		a.client, err = newClient(a.cfg.Settings, acc.Cookies, acc.UID)
+	// Rebuild when the login or the proxy changed, e.g. after login or config set in the shell.
+	key := fmt.Sprint(acc.UID, "\x00", acc.Cookies, "\x00", a.cfg.Settings.Proxy)
+	if a.client == nil || a.clientKey != key {
+		c, err := newClient(a.cfg.Settings, acc.Cookies, acc.UID, a.transport)
 		if err != nil {
 			return nil, err
 		}
+		a.client, a.clientKey = c, key
 	}
 	return a.client, nil
 }

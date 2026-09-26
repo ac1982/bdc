@@ -71,12 +71,8 @@ var tiebaDevice = func() map[string]string {
 	}
 }()
 
-// realMD5 undoes the obfuscation Baidu applies to md5 fields. For a file
-// stored as one block the block's md5 is the file's md5.
-func realMD5(raw string, blocks []string) string {
-	if len(blocks) == 1 {
-		return blocks[0]
-	}
+// deobfuscateMD5 undoes the obfuscation Baidu applies to md5 fields.
+func deobfuscateMD5(raw string) string {
 	if len(raw) != 32 || strings.ContainsRune("0123456789abcdef", rune(raw[9])) {
 		return raw
 	}

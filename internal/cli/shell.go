@@ -2,12 +2,14 @@ package cli
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"path"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/chzyer/readline"
@@ -112,7 +114,9 @@ func (c *completer) paths(word string) []string {
 		return nil
 	}
 	dir, prefix := path.Split(word)
-	files, err := client.List(c.app.ctx, c.app.abs(cmp.Or(dir, ".")))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	files, err := client.List(ctx, c.app.abs(cmp.Or(dir, ".")))
 	if err != nil {
 		return nil
 	}

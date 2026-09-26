@@ -42,7 +42,7 @@ func (c *Client) Whoami(ctx context.Context) (User, error) {
 	}
 	err := c.do(ctx, &request{
 		op:     "验证登录",
-		url:    "http://tieba.baidu.com/c/s/login",
+		url:    "https://tieba.baidu.com/c/s/login",
 		form:   form,
 		ua:     "bdtb for Android 6.9.2.1",
 		header: http.Header{"Net": {"1"}, "Client_logid": {ms}},
@@ -62,6 +62,8 @@ func (c *Client) Whoami(ctx context.Context) (User, error) {
 
 // UK returns the user's netdisk key, which upload requests are keyed on.
 func (c *Client) UK(ctx context.Context) (int64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.uk != 0 {
 		return c.uk, nil
 	}
@@ -83,12 +85,12 @@ func (c *Client) UK(ctx context.Context) (int64, error) {
 
 // Quota is the netdisk capacity in bytes.
 type Quota struct {
-	Total int64 `json:"quota"`
+	Total int64 `json:"total"`
 	Used  int64 `json:"used"`
 }
 
 func (c *Client) Quota(ctx context.Context) (Quota, error) {
 	var q Quota
-	err := c.do(ctx, &request{op: "获取容量", url: pcsURL("quota", "info", nil)}, &q)
+	err := c.do(ctx, &request{op: "获取容量", url: panBase + "api/quota?checkfree=1", ua: uaNetdisk}, &q)
 	return q, err
 }

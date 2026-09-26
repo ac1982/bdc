@@ -93,10 +93,19 @@ Errors map to exit codes in one place (`exit.go`):
 
 ## Testing
 
-- `internal/baidu`: request building and response decoding against recorded
-  responses.
-- `internal/transfer`: local `httptest` servers and fake upload targets.
-- `e2e`: runs the built binary through scenarios. With `-record` it talks to
-  Baidu with a real account (only under `/bnd-test`) and saves the HTTP
-  exchanges; by default it replays them offline and compares stdout, stderr
-  and exit codes with the recorded run.
+- `internal/baidutest` is an in-memory Baidu that speaks every endpoint bnd
+  uses and fails the way the real service does (e.g. `errno -6` for a bad
+  login, empty listings for files). Unit tests of `internal/baidu` and
+  `internal/cli` run whole commands against it, so CI covers the command
+  behaviour without an account.
+- `internal/transfer`: local `httptest` servers and fake upload targets:
+  resuming, stale records, wrong ranges, expiring links.
+- Live tests (`BND_LIVE_COOKIES=… go test ./internal/... -run Live`) exercise
+  the API and transfers against the real service, in a fresh directory under
+  `/bnd-test`.
+- `e2e` runs the built binary through scenarios. With `-record` it talks to
+  Baidu with a real account, in a fresh directory under `/bnd-test`, and saves
+  the HTTP exchanges; by default it replays them offline and compares stdout,
+  stderr and exit codes with the recorded run. The recording transport is
+  compiled in only with `-tags e2e`, which the e2e test builds with; release
+  binaries do not contain it. Recordings hold account data and stay local.

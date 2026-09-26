@@ -64,7 +64,7 @@ func (c *loginCmd) Run(app *App) (Result, error) {
 		return nil, usagef("需要 --cookies, --from-chrome 或 --from-edge")
 	}
 
-	client, err := newClient(app.cfg.Settings, cookies, 0)
+	client, err := newClient(app.cfg.Settings, cookies, 0, app.transport)
 	if err != nil {
 		return nil, withKind(Input, err)
 	}

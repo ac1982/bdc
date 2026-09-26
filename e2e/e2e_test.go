@@ -47,7 +47,7 @@ func TestMain(m *testing.M) {
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	build := exec.Command("go", "build", "-o", binary, "..")
+	build := exec.Command("go", "build", "-tags", "e2e", "-o", binary, "..")
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "build failed:", err)
@@ -58,8 +58,9 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// step is one command of a scenario. In args, $WORK is the scenario's local
-// working directory, $COOKIES the login, and $NAME a value captured earlier.
+// step is one command of a scenario. In args, $ROOT is the scenario's
+// netdisk directory, $WORK its local working directory, $COOKIES the login,
+// and $NAME a value captured earlier.
 type step struct {
 	name    string
 	args    []string
@@ -90,7 +91,7 @@ func TestScenarios(t *testing.T) {
 				os.RemoveAll(dir)
 				os.MkdirAll(dir, 0o755)
 			}
-			run(t, sc, dir, cookies)
+			run(t, sc, dir, cookies, root(t, dir, sc.name))
 			if *record {
 				checkNoSecrets(t, dir, cookies)
 			}
@@ -98,7 +99,23 @@ func TestScenarios(t *testing.T) {
 	}
 }
 
-func run(t *testing.T, sc scenario, dir, cookies string) {
+// root is the scenario's own netdisk directory, new for every recording so
+// that recording never touches anything else under /bnd-test.
+func root(t *testing.T, dir, name string) string {
+	file := filepath.Join(dir, "root")
+	if *record {
+		r := fmt.Sprintf("/bnd-test/e2e-%s-%d", name, time.Now().Unix())
+		os.WriteFile(file, []byte(r), 0o644)
+		return r
+	}
+	r, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(r)
+}
+
+func run(t *testing.T, sc scenario, dir, cookies, root string) {
 	tmp := t.TempDir()
 	work, cfg := filepath.Join(tmp, "work"), filepath.Join(tmp, "config")
 	for name, content := range sc.files {
@@ -109,7 +126,7 @@ func run(t *testing.T, sc scenario, dir, cookies string) {
 		}
 	}
 	os.MkdirAll(work, 0o755)
-	vars := map[string]string{"WORK": work, "COOKIES": cookies}
+	vars := map[string]string{"WORK": work, "COOKIES": cookies, "ROOT": root}
 	for i, st := range sc.steps {
 		base := filepath.Join(dir, fmt.Sprintf("%02d-%s", i+1, st.name))
 		args := make([]string, len(st.args))
@@ -153,7 +170,7 @@ func run(t *testing.T, sc scenario, dir, cookies string) {
 			}
 		}
 		got := fmt.Sprintf("$ bnd %s\n[exit %d]\n--- stdout\n%s--- stderr\n%s",
-			strings.Join(st.args, " "), code, normalize(stdout.String(), tmp, st.sorted), normalize(stderr.String(), tmp, st.sorted))
+			strings.Join(st.args, " "), code, normalize(stdout.String(), tmp, root, st.sorted), normalize(stderr.String(), tmp, root, st.sorted))
 		golden := base + ".golden"
 		if *record || *update {
 			os.WriteFile(golden, []byte(got), 0o644)
@@ -177,7 +194,8 @@ var (
 
 // normalize removes what changes from run to run: temporary paths, times
 // and the column widths that depend on them.
-func normalize(s, tmp string, sorted bool) string {
+func normalize(s, tmp, root string, sorted bool) string {
+	s = strings.ReplaceAll(s, root, "$ROOT")
 	if real, err := filepath.EvalSymlinks(tmp); err == nil {
 		s = strings.ReplaceAll(s, real, "$TMP")
 	}

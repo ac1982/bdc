@@ -3,6 +3,7 @@ package baidu
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -109,6 +110,9 @@ func (c *Client) SaveShare(ctx context.Context, link ShareLink, dir string) ([]s
 		ua:     uaBrowser,
 		header: http.Header{"Referer": {link.url()}},
 	}, &resp)
+	if e, ok := errors.AsType[*Error](err); ok && e.Code == 2 {
+		e.Err = ErrExists // here errno 2 means 文件已存在 (e.g. one's own share)
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -1,3 +1,5 @@
+//go:build e2e
+
 package cli
 
 import (
@@ -16,7 +18,7 @@ import (
 	"gopkg.in/dnaeon/go-vcr.v4/pkg/recorder"
 )
 
-// Test hooks: BND_CASSETTE=<file> replays HTTP from the file instead of the
+// Built only with -tags e2e (see e2e/). Test hooks: BND_CASSETTE=<file> replays HTTP from the file instead of the
 // network; with BND_RECORD=1 it records real traffic into it. Used by e2e.
 const (
 	envCassette = "BND_CASSETTE"

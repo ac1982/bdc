@@ -21,17 +21,14 @@ func TestSignatures(t *testing.T) {
 	}
 }
 
-func TestRealMD5(t *testing.T) {
+func TestDeobfuscateMD5(t *testing.T) {
 	for _, c := range []struct{ raw, want string }{
 		{"d8319ac05p986c5910e98c966b7d1f9d", "d033a1b6d912dfa7e2d6d27211cac9f1"},
 		{"d033a1b6d912dfa7e2d6d27211cac9f1", "d033a1b6d912dfa7e2d6d27211cac9f1"}, // not obfuscated
 		{"", ""},
 	} {
-		if got := realMD5(c.raw, nil); got != c.want {
-			t.Errorf("realMD5(%q) = %q, want %q", c.raw, got, c.want)
+		if got := deobfuscateMD5(c.raw); got != c.want {
+			t.Errorf("deobfuscateMD5(%q) = %q, want %q", c.raw, got, c.want)
 		}
-	}
-	if got := realMD5("d8319ac05p986c5910e98c966b7d1f9d", []string{"abc"}); got != "abc" {
-		t.Errorf("single block: %q", got)
 	}
 }

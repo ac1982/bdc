@@ -3,6 +3,8 @@ package transfer
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -27,14 +29,14 @@ func TestLive(t *testing.T) {
 	if _, err := c.Whoami(ctx); err != nil {
 		t.Fatal(err)
 	}
-	const root = "/bnd-test/live"
+	root := fmt.Sprintf("/bnd-test/live-%d", time.Now().UnixNano())
 	c.Remove(ctx, root)
 	t.Cleanup(func() { c.Remove(context.Background(), root) })
 
 	if _, err := c.Mkdir(ctx, root); err != nil {
 		t.Fatal("mkdir:", err)
 	}
-	if _, err := c.Mkdir(ctx, root); baidu.Code(err) != 31061 {
+	if _, err := c.Mkdir(ctx, root); !errors.Is(err, baidu.ErrExists) {
 		t.Fatal("mkdir again:", err)
 	}
 
@@ -116,7 +118,7 @@ func TestLive(t *testing.T) {
 	if err := c.Remove(ctx, root+"/sub", root+"/small1"); err != nil {
 		t.Error("remove:", err)
 	}
-	if err := c.Remove(ctx, root+"/missing"); baidu.Code(err) != 31066 {
+	if err := c.Remove(ctx, root+"/missing"); !errors.Is(err, baidu.ErrNotFound) {
 		t.Error("remove missing:", err)
 	}
 }

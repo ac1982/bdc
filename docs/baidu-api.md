@@ -12,6 +12,26 @@ Tags used below:
 > `locatedownload`, where the old code puts the signature params last on purpose (§5.1). Values marked `REDACTED` are
 > credentials (Cookie, BDUSS, bdstoken in requests).
 
+> **Which family bnd uses (2026-09-26, verified live).** PCS endpoints do not report a bad login: with an invalid
+> BDUSS, `file?method=meta` answers 31066 "not found" and `quota` answers with zeros. The pan endpoints answer
+> `errno -6`. bnd therefore uses the pan family for everything except the upload data path (`locateupload`,
+> `superfile2`) and download links (`locatedownload`):
+>
+> | need | endpoint | notes |
+> |---|---|---|
+> | metadata | `GET pan.baidu.com/api/filemetas?target=<JSON paths>&dlink=0&blocks=1` | `info[]` with `block_list`; a missing path fails the batch: `errno 12`, `info[i].errno -9` |
+> | quota | `GET pan.baidu.com/api/quota?checkfree=1` | `total`, `used` |
+> | search | `GET pan.baidu.com/api/search?key=&dir=&recursion=1&num=&page=` | `list[]` (no `block_list`), `has_more` |
+> | mkdir | `POST pan.baidu.com/api/create?a=commit`, form `path`, `isdir=1`, `rtype=0` | creates parents; exists: `errno -8` |
+> | delete / copy / move | `POST pan.baidu.com/api/filemanager?opera=<op>&async=0&onnest=fail`, form `filelist` | copy/move items `{path, dest, newname}`, missing dest dirs are created; a failed item gives `errno 12` with `info[].errno` (-9 missing, -30 exists); **delete of a missing path reports success**, so check first |
+>
+> All take the netdisk UA and no bdstoken. The login check (tieba) works over **https** as well; never send BDUSS
+> over plain http.
+>
+> **md5.** When `block_list` has exactly one entry it is the content md5, whatever the size (a 192 MB file checked
+> against the CDN `Content-MD5`). With several entries the stored md5 is not the content md5. `list` and `search`
+> carry no `block_list`; only files up to 4 MiB are then known to be one block.
+
 ---
 
 ## 0. Conventions shared by all endpoints

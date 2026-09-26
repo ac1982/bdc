@@ -76,9 +76,9 @@ func TestDownloadResume(t *testing.T) {
 	copy(part[:chunkSize], content[:chunkSize])
 	copy(part[2*chunkSize:], content[2*chunkSize:])
 	os.WriteFile(dest+PartSuffix, part, 0o644)
-	saveJSON(dest+PartSuffix+".json", record{Size: int64(len(content)), Done: []bool{true, false, true}})
+	saveJSON(dest+PartSuffix+".json", record{ID: "v1", Size: int64(len(content)), Done: []bool{true, false, true}})
 
-	d := &Download{Client: http.DefaultClient, Size: int64(len(content)), Dest: dest, Conns: 4,
+	d := &Download{Client: http.DefaultClient, ID: "v1", Size: int64(len(content)), Dest: dest, Conns: 4,
 		URLs: func(context.Context) ([]string, error) { return []string{srv.URL}, nil }}
 	if err := d.Run(context.Background()); err != nil {
 		t.Fatal(err)
@@ -124,3 +124,48 @@ func TestDownloadRefreshesExpiredLinks(t *testing.T) {
 }
 
 func bytesReader(b []byte) *bytes.Reader { return bytes.NewReader(b) }
+
+// A record is only trusted with its own part file and the same remote version.
+func TestDownloadDiscardsStaleRecords(t *testing.T) {
+	content := payload(chunkSize + 10)
+	srv := serve(t, content)
+	for name, setup := range map[string]func(dest string){
+		"part missing": func(dest string) {},
+		"part truncated": func(dest string) {
+			os.WriteFile(dest+PartSuffix, content[:10], 0o644)
+		},
+		"other version": func(dest string) {
+			os.WriteFile(dest+PartSuffix, make([]byte, len(content)), 0o644)
+			saveJSON(dest+PartSuffix+".json", record{ID: "old", Size: int64(len(content)), Done: []bool{true, true}})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dest := filepath.Join(t.TempDir(), "f")
+			saveJSON(dest+PartSuffix+".json", record{ID: "v2", Size: int64(len(content)), Done: []bool{true, true}})
+			setup(dest)
+			d := &Download{Client: http.DefaultClient, ID: "v2", Size: int64(len(content)), Dest: dest,
+				URLs: func(context.Context) ([]string, error) { return []string{srv.URL}, nil }}
+			if err := d.Run(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := os.ReadFile(dest); !bytes.Equal(got, content) {
+				t.Fatal("content differs")
+			}
+		})
+	}
+}
+
+func TestDownloadRejectsWrongRange(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Range", "bytes 4-7/8")
+		w.WriteHeader(http.StatusPartialContent)
+		w.Write([]byte("EFGH"))
+	}))
+	defer srv.Close()
+	d := &Download{Client: http.DefaultClient, Size: 8, Dest: filepath.Join(t.TempDir(), "f")}
+	f, _ := os.Create(d.Dest)
+	defer f.Close()
+	if _, err := d.fetchRange(context.Background(), f, srv.URL, 0, 4); err == nil {
+		t.Fatal("accepted a range that was not asked for")
+	}
+}
