@@ -1,0 +1,24 @@
+# Archives are named bnd-<tag>-<os>-<arch>; `bnd update` looks for exactly that.
+version: 2
+
+builds:
+  - binary: bnd
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: ["-s -w -X github.com/ac1982/baidunetdisk-cli/internal/cli.Version={{ .Tag }}"]
+
+archives:
+  - name_template: "bnd-{{ .Tag }}-{{ .Os }}-{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files: [LICENSE, README.md, README.zh-CN.md, llms.txt]
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
