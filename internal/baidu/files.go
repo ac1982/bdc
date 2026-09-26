@@ -259,12 +259,13 @@ func (c *Client) renameAll(ctx context.Context, opera, verb string, pairs []Rena
 }
 
 // doneItems finds the items of a failed batch that were done anyway: Baidu
-// names (by source path) the items that failed, and does the others. Without
-// that answer (e.g. a network error), or with a failure that names none of
-// the items, nothing is known to be done.
+// names (by source path) the items that failed, and does the others; a
+// synchronous answer also lists done items, with errno 0. Without that
+// answer (e.g. a network error), or with a failure that names none of the
+// items, nothing is known to be done.
 func doneItems[T any](batch []T, source func(T) string, err error) []T {
 	e, ok := errors.AsType[*Error](err)
-	if !ok || len(e.Items) == 0 {
+	if !ok {
 		return nil
 	}
 	sources := map[string]bool{} // by lower-cased path: Baidu ignores case
@@ -273,10 +274,16 @@ func doneItems[T any](batch []T, source func(T) string, err error) []T {
 	}
 	failed := map[string]bool{}
 	for _, it := range e.Items {
+		if it.Errno == 0 {
+			continue
+		}
 		if !sources[strings.ToLower(it.Path)] {
 			return nil
 		}
 		failed[strings.ToLower(it.Path)] = true
+	}
+	if len(failed) == 0 {
+		return nil
 	}
 	var done []T
 	for _, it := range batch {

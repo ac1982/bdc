@@ -84,20 +84,7 @@ func (a *App) exec(args []string) int {
 	a.json = hasJSONFlag(args)      // until parsed, for errors about the command line
 	var root root
 	var help bytes.Buffer
-	parser, err := kong.New(&root,
-		kong.Name("bdc"),
-		kong.Description(description),
-		kong.NoDefaultHelp(),
-		kong.Writers(&help, a.stderr),
-		kong.Exit(func(int) {}),
-		kong.ConfigureHelp(kong.HelpOptions{Compact: true}),
-		kong.Vars{"version": Version},
-	)
-	if err != nil {
-		panic(err) // the command grammar is static; this is a programming error
-	}
-
-	kctx, err := parser.Parse(args)
+	kctx, err := newParser(&root, &help, a.stderr).Parse(args)
 	var perr *kong.ParseError
 	if errors.As(err, &perr) {
 		kctx = perr.Context
@@ -122,6 +109,23 @@ func (a *App) exec(args []string) int {
 	}
 	res, err := cmd.Run(a)
 	return a.report(command, res, err)
+}
+
+// newParser returns the parser of the command grammar into root.
+func newParser(root *root, stdout, stderr io.Writer) *kong.Kong {
+	parser, err := kong.New(root,
+		kong.Name("bdc"),
+		kong.Description(description),
+		kong.NoDefaultHelp(),
+		kong.Writers(stdout, stderr),
+		kong.Exit(func(int) {}),
+		kong.ConfigureHelp(kong.HelpOptions{Compact: true}),
+		kong.Vars{"version": Version},
+	)
+	if err != nil {
+		panic(err) // the command grammar is static; this is a programming error
+	}
+	return parser
 }
 
 // report writes the outcome of a command and returns its exit code.

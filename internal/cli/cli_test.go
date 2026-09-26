@@ -506,7 +506,14 @@ func TestSearchDepth(t *testing.T) {
 func TestShellHistoryOmitsLogin(t *testing.T) {
 	ta := newTestApp(t)
 	in := filepath.Join(t.TempDir(), "in")
-	os.WriteFile(in, []byte("login --cookies \"BDUSS=SECRET\" --bogus\nls /\nexit\n"), 0o600)
+	lines := []string{
+		`login --cookies "BDUSS=SECRET1" --bogus`,
+		`--json login --cookies "BDUSS=SECRET2"`,
+		`--json=true login --cookies "BDUSS=SECRET3" --bogus`,
+		`logn --cookies "BDUSS=SECRET4"`, // does not parse: not kept either
+		"ls /", "exit",
+	}
+	os.WriteFile(in, []byte(strings.Join(lines, "\n")+"\n"), 0o600)
 	var err error
 	if ta.stdin, err = os.Open(in); err != nil {
 		t.Fatal(err)
@@ -517,7 +524,7 @@ func TestShellHistoryOmitsLogin(t *testing.T) {
 	}
 	dir, _ := config.Dir()
 	h, _ := os.ReadFile(filepath.Join(dir, "history"))
-	if strings.Contains(string(h), "SECRET") || !strings.Contains(string(h), "ls /") {
+	if strings.Contains(string(h), "SECRET") || strings.TrimSpace(string(h)) != "ls /" {
 		t.Errorf("history: %q", h)
 	}
 }

@@ -5,13 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"path"
 	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
-	"github.com/alecthomas/kong"
 	"github.com/chzyer/readline"
 	"github.com/kballard/go-shellquote"
 
@@ -53,14 +53,14 @@ func (a *App) shell() int {
 		if len(args) == 0 {
 			continue
 		}
-		if args[0] != "login" {
-			rl.SaveHistory(line)
-		}
 		switch {
 		case args[0] == "exit" || args[0] == "quit":
 			return 0
 		case args[0] == "help":
 			args = append(args[1:], "--help")
+		}
+		if historic(args) {
+			rl.SaveHistory(line)
 		}
 		a.exec(args)
 		rl.SetPrompt(a.prompt())
@@ -74,14 +74,18 @@ func (a *App) prompt() string {
 	return "bdc (未登录)$ "
 }
 
+// historic reports whether a command line may go into the history: one that
+// parses, and not a login, whose line holds the cookies.
+func historic(args []string) bool {
+	kctx, err := newParser(&root{}, io.Discard, io.Discard).Parse(args)
+	ok := err == nil || errors.Is(err, errShowHelp) || errors.Is(err, errShowVersion)
+	return ok && commandName(kctx) != "login"
+}
+
 // commandNames lists the top-level commands of the grammar.
 func commandNames() []string {
-	k, err := kong.New(&root{})
-	if err != nil {
-		return nil
-	}
 	var names []string
-	for _, n := range k.Model.Children {
+	for _, n := range newParser(&root{}, io.Discard, io.Discard).Model.Children {
 		names = append(names, n.Name)
 	}
 	return append(names, "help", "exit")

@@ -82,6 +82,8 @@ func TestDoneItems(t *testing.T) {
 		{"path in another case", &Error{Items: []BatchItem{{"/B", -8}}}, "/a,/c"},
 		{"all failed", &Error{Items: []BatchItem{{"/a", -8}, {"/b", -9}, {"/c", -8}}}, ""},
 		{"a failure without a path", &Error{Items: []BatchItem{{"", -9}}}, ""},
+		{"a synchronous answer, done items included", &Error{Code: 132, Items: []BatchItem{{"/a", 0}, {"/b", 132}}}, "/a,/c"},
+		{"no item said to fail", &Error{Code: 12, Items: []BatchItem{{"/a", 0}}}, ""},
 		{"no answer per item", &Error{Code: -6}, ""},
 		{"not a Baidu error", context.Canceled, ""},
 	} {
