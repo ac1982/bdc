@@ -25,7 +25,7 @@ that is noted; bdc does not use them.
 | code | meaning | bdc's class |
 |---|---|---|
 | -6 | not logged in / bad login | auth |
-| 132 | security check required (`authwidget`, `verify_scene`): SMS in the browser | auth; the user must verify on the web or phone |
+| 132 | security check required (`authwidget`, `verify_scene`), see below | auth; the user must verify on the web or phone |
 | -9, 31066 | no such file | input |
 | -8, -30, 31061 | already exists | input |
 | -7 | illegal name | input |
@@ -33,6 +33,17 @@ that is noted; bdc does not use them.
 | 4 | share already saved here (`文件已转存`) | input |
 | 2 | generic; on share/transfer 文件已存在 (one's own share) or 转存路径不存在 | input when it says 已存在 |
 | 404 | rapidupload: content unknown | (upload normally) |
+
+**Security check (132).** Baidu's risk control answers a change (seen on deletes after a burst of them) with `errno 132`
+and `authwidget{saferand, safesign, safetpl}` (`safetpl` names the operation, e.g. `filemanager`). The web app then
+shows `/disk/appeal?saferand=&safesign=&safetpl=` and calls, each a `POST /api/authwidget?method=<m>` with the common
+query and form `safetpl, saferand, safesign`:
+1. `get` → `data{sms, email (masked), support_type: ["sms","email"]}`;
+2. `send` + `type=sms` (or `email`) → sends a 6-digit code;
+3. `check` + `vcode=<code>` → `data{dtoken}`.
+
+The app then repeats the original request unchanged (no dtoken, no new cookie): the check lifts the block for the
+account, and later deletes from other clients (bdc) succeed too. Observed 2026-09-26.
 
 ## Files
 
