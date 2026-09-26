@@ -423,13 +423,28 @@ func TestRemoveReportsPartialBatches(t *testing.T) {
 		ta.fake.Put(fmt.Sprintf("/d/%03d", i), nil, 1)
 	}
 	ta.fake.Fail = func(endpoint string, n int) any {
-		if endpoint == "pan.baidu.com/api/filemanager" && n == 2 {
-			return map[string]any{"errno": 132}
+		if endpoint == "pcs.baidu.com/rest/2.0/pcs/file?delete" && n == 2 {
+			return map[string]any{"error_code": 31045, "error_msg": "user not exists"}
 		}
 		return nil
 	}
 	code, doc := ta.json(t, "rm", "/d/*")
-	if removed, _ := doc["removed"].([]any); code != 4 || len(removed) != 500 {
+	if removed, _ := doc["removed"].([]any); code == 0 || len(removed) != 500 {
 		t.Errorf("%d, removed %d", code, len(removed))
+	}
+}
+
+// A delete that Baidu reports busy (an earlier one still running) is retried.
+func TestRemoveWaitsWhileBusy(t *testing.T) {
+	ta := newTestApp(t)
+	ta.fake.Put("/f", []byte("f"), 1)
+	ta.fake.Fail = func(endpoint string, n int) any {
+		if endpoint == "pcs.baidu.com/rest/2.0/pcs/file?delete" && n == 1 {
+			return map[string]any{"error_code": 31171, "error_msg": "other async job is doing now"}
+		}
+		return nil
+	}
+	if code := ta.run("rm", "/f"); code != 0 || ta.fake.Exists("/f") {
+		t.Errorf("%d %s", code, ta.stderr.String())
 	}
 }

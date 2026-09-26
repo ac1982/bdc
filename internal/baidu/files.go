@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/cenkalti/backoff/v5"
 )
 
 // File is a file or directory in the netdisk.
@@ -193,20 +195,47 @@ func (c *Client) Mkdir(ctx context.Context, dir string) (File, error) {
 }
 
 // Remove moves files and directories to the recycle bin and returns the
-// paths removed, which on failure may be some of them. Every path must
-// exist: Baidu itself would silently accept missing ones.
+// paths removed, which on failure may be some of them. The pan metadata call
+// checks first that every path exists and that the login is valid (PCS
+// reports neither); the delete itself goes through PCS, because pan's
+// filemanager delete may demand an interactive security check (errno 132)
+// that a command line cannot pass.
 func (c *Client) Remove(ctx context.Context, paths ...string) ([]string, error) {
 	if _, err := c.Metas(ctx, paths...); err != nil {
 		return nil, err
 	}
 	var done []string
 	for _, batch := range splitBy(paths, byCount[string](maxBatch)) {
-		if err := c.fileManager(ctx, "delete", "删除 "+describe(batch), batch); err != nil {
+		list := make([]map[string]string, len(batch))
+		for i, p := range batch {
+			list[i] = map[string]string{"path": p}
+		}
+		req := &request{op: "删除 " + describe(batch), url: pcsURL("file", "delete", nil), param: map[string]any{"list": list}}
+		if err := c.whenIdle(ctx, func() error { return c.do(ctx, req, nil) }); err != nil {
 			return done, err
 		}
 		done = append(done, batch...)
 	}
 	return done, nil
+}
+
+// errBusy is PCS's "other async job is doing now": an earlier delete is still
+// running on Baidu's side, and this request was not carried out.
+const errBusy = 31171
+
+// whenIdle runs op, and again (with growing pauses, for up to a minute)
+// while Baidu reports it busy. Since a busy request did nothing, repeating
+// it is safe.
+func (c *Client) whenIdle(ctx context.Context, op func() error) error {
+	_, err := backoff.Retry(ctx, func() (struct{}, error) {
+		err := op()
+		if err != nil && Code(err) != errBusy {
+			err = backoff.Permanent(err)
+		}
+		return struct{}{}, err
+	}, backoff.WithBackOff(&backoff.ExponentialBackOff{InitialInterval: time.Second, Multiplier: 2, MaxInterval: 10 * time.Second}),
+		backoff.WithMaxElapsedTime(time.Minute))
+	return err
 }
 
 // Rename is one source and destination of a copy or move.
@@ -282,7 +311,7 @@ func moves(pairs []Rename) []map[string]string {
 	return list
 }
 
-// fileManager runs a batch delete, copy or move; an existing target fails it.
+// fileManager runs a batch copy or move; an existing target fails it.
 func (c *Client) fileManager(ctx context.Context, opera, op string, list any) error {
 	data, _ := json.Marshal(list)
 	q := url.Values{"opera": {opera}, "async": {"0"}, "onnest": {"fail"}}

@@ -149,8 +149,12 @@ func run(t *testing.T, sc scenario, dir, cookies, root string) {
 		}
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		began := time.Now()
 		err := cmd.Run()
 		cancel()
+		if testing.Verbose() {
+			t.Logf("%s: %v", base, time.Since(began).Round(time.Millisecond))
+		}
 		code := 0
 		if ee := (*exec.ExitError)(nil); errors.As(err, &ee) {
 			code = ee.ExitCode()

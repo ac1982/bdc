@@ -59,6 +59,7 @@ const errBatch = 12
 var codeClass = map[int]error{
 	-6:    ErrAuth,     // 身份验证失败
 	132:   ErrAuth,     // 帐号存在安全风险, 需要安全验证
+	31045: ErrAuth,     // user not exists: the login is not valid
 	-9:    ErrNotFound, // 文件或目录不存在
 	31066: ErrNotFound, // file does not exist
 	-8:    ErrExists,   // 文件或目录已存在
@@ -72,6 +73,7 @@ var codeClass = map[int]error{
 // codeMessage explains codes whose server message is empty or unhelpful.
 var codeMessage = map[int]string{
 	-6:    "身份验证失败, 请重新登录",
+	31045: "登录已失效, 请重新登录",
 	132:   "百度要求安全验证 (操作过于频繁或帐号有风险), 请在网页或手机上完成验证后重试",
 	-7:    "文件名非法",
 	-8:    "文件或目录已存在",

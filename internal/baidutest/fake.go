@@ -134,11 +134,12 @@ func (f *Fake) endpoints() map[string]func(http.ResponseWriter, *http.Request) {
 		"pan.baidu.com/api/quota": func(w http.ResponseWriter, r *http.Request) {
 			reply(w, map[string]any{"errno": 0, "total": 1 << 40, "used": 1 << 30})
 		},
-		"pan.baidu.com/api/list":        f.list,
-		"pan.baidu.com/api/filemetas":   f.metas,
-		"pan.baidu.com/api/search":      f.search,
-		"pan.baidu.com/api/create":      f.create,
-		"pan.baidu.com/api/filemanager": f.fileManager,
+		"pan.baidu.com/api/list":                 f.list,
+		"pan.baidu.com/api/filemetas":            f.metas,
+		"pan.baidu.com/api/search":               f.search,
+		"pan.baidu.com/api/create":               f.create,
+		"pan.baidu.com/api/filemanager":          f.fileManager,
+		"pcs.baidu.com/rest/2.0/pcs/file?delete": f.pcsDelete,
 		"pan.baidu.com/api/precreate": func(w http.ResponseWriter, r *http.Request) {
 			reply(w, map[string]any{"errno": 0, "return_type": 1, "uploadid": "up-" + r.Form.Get("path")})
 		},
@@ -349,18 +350,32 @@ func (f *Fake) uploadBlock(w http.ResponseWriter, r *http.Request) {
 	reply(w, map[string]any{"md5": hex.EncodeToString(sum[:])})
 }
 
-// fileManager deletes, copies or moves; items apply in order until one fails.
+// pcsDelete moves paths to the recycle bin (here: forgets them).
+func (f *Fake) pcsDelete(w http.ResponseWriter, r *http.Request) {
+	r.ParseMultipartForm(1 << 20)
+	var param struct{ List []struct{ Path string } }
+	json.Unmarshal([]byte(r.FormValue("param")), &param)
+	for _, it := range param.List {
+		if f.nodes[key(it.Path)] == nil {
+			w.WriteHeader(http.StatusNotFound)
+			reply(w, map[string]any{"error_code": 31066, "error_msg": "file does not exist"})
+			return
+		}
+	}
+	for _, it := range param.List {
+		for _, k := range f.subtree(it.Path) {
+			delete(f.nodes, k)
+		}
+	}
+	reply(w, map[string]any{"request_id": 1})
+}
+
+// fileManager copies or moves; items apply in order until one fails. Its
+// delete answers errno 132 (a security check), as the real one did.
 func (f *Fake) fileManager(w http.ResponseWriter, r *http.Request) {
 	opera, list := r.Form.Get("opera"), r.Form.Get("filelist")
 	if opera == "delete" {
-		var paths []string
-		json.Unmarshal([]byte(list), &paths)
-		for _, p := range paths { // missing paths are silently fine, as on the real service
-			for _, k := range f.subtree(p) {
-				delete(f.nodes, k)
-			}
-		}
-		reply(w, map[string]any{"errno": 0})
+		reply(w, map[string]any{"errno": 132, "info": []any{}})
 		return
 	}
 	var items []struct{ Path, Dest, Newname string }

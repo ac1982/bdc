@@ -25,6 +25,12 @@ Tags used below:
 > | mkdir | `POST pan.baidu.com/api/create?a=commit`, form `path`, `isdir=1`, `rtype=0` | creates parents; exists: `errno -8` |
 > | delete / copy / move | `POST pan.baidu.com/api/filemanager?opera=<op>&async=0&onnest=fail`, form `filelist` | copy/move items `{path, dest, newname}`, missing dest dirs are created; a failed item gives `errno 12` with `info[].errno` (-9 missing, -30 exists); **delete of a missing path reports success**, so check first |
 >
+> **Delete goes through PCS** (`POST pcs.baidu.com/rest/2.0/pcs/file?method=delete`, multipart `param`), after a pan
+> `filemetas` check (which catches a bad login and missing paths): pan's filemanager delete started answering
+> `errno 132` with `verify_scene`/`authwidget` (an interactive security check) on 2026-09-26, while its copy/move and
+> the PCS delete kept working. PCS answers `31171` ("other async job is doing now") while an earlier delete is still
+> running; that request did nothing and is retried.
+>
 > All take the netdisk UA and no bdstoken. The login check (tieba) works over **https** as well; never send BDUSS
 > over plain http.
 >
