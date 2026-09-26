@@ -14,10 +14,14 @@ import (
 // meter shows the combined progress of a transfer on stderr: a bar when
 // stderr is a terminal, and a line for each finished file either way.
 type meter struct {
-	mu  sync.Mutex // held while the bar is drawn, or put aside (see hold)
+	mu  sync.Mutex
 	app *App
 	w   io.Writer
 	bar *progressbar.ProgressBar // nil without a terminal
+
+	held   bool     // a dialog has the terminal (see hold): nothing is drawn
+	unseen int64    // bytes counted while held
+	lines  []string // lines logged while held
 }
 
 // newMeter starts the meter of the app's transfer, until done.
@@ -41,27 +45,51 @@ func (a *App) newMeter(total int64, verb string) *meter {
 
 // add counts n more bytes transferred.
 func (m *meter) add(n int64) {
-	if m.bar != nil {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		m.bar.Add64(n)
+	if m.bar == nil {
+		return
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.held {
+		m.unseen += n
+		return
+	}
+	m.bar.Add64(n)
 }
 
-// hold clears the bar and keeps it from being drawn until release is called,
-// for a dialog on the terminal. Transfers wait meanwhile.
+// hold clears the bar and draws nothing until release is called, for a
+// dialog on the terminal; transfers go on, and what they report is shown
+// afterwards.
 func (m *meter) hold() (release func()) {
 	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.held = true
 	if m.bar != nil {
 		m.bar.Clear()
 	}
-	return m.mu.Unlock
+	return func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		m.held = false
+		for _, l := range m.lines {
+			fmt.Fprintln(m.w, l)
+		}
+		m.lines = nil
+		if m.bar != nil {
+			m.bar.Add64(m.unseen)
+		}
+		m.unseen = 0
+	}
 }
 
 // logf prints a line above the bar.
 func (m *meter) logf(format string, args ...any) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.held {
+		m.lines = append(m.lines, fmt.Sprintf(format, args...))
+		return
+	}
 	if m.bar != nil {
 		m.bar.Clear()
 	}

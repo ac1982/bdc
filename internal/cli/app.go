@@ -30,16 +30,16 @@ var Version = "dev"
 // App is the state one run of bdc shares between commands: in the
 // interactive shell it lives across many commands.
 type App struct {
-	ctx     context.Context
-	cancel  context.CancelFunc // cancels ctx: the command
-	cfg     *config.Config
-	json    bool
-	stdout  io.Writer
-	stderr  io.Writer
-	stdin   *os.File
-	line    *readline.Instance // reads the terminal, see readLine; the shell's own in the shell
-	pending chan lineRead      // a line still being read, handed to the next readLine
-	meter   *meter             // the progress of the running transfer, if any
+	ctx    context.Context
+	cancel context.CancelFunc // cancels ctx: the command
+	cfg    *config.Config
+	json   bool
+	stdout io.Writer
+	stderr io.Writer
+	stdin  *os.File
+	line   *readline.Instance // reads the terminal, see readLine; the shell's own in the shell
+	keys   *keyboard          // what line reads
+	meter  *meter             // the progress of the running transfer, if any
 
 	client    *baidu.Client
 	clientKey string            // what client was built from
@@ -178,49 +178,6 @@ func (a *App) confirm(yes bool, question string) error {
 }
 
 var errCancelled = withKind(Cancelled, errors.New("已取消"))
-
-// ask puts a question to the person at the terminal and returns the answer.
-func (a *App) ask(ctx context.Context, question string) (string, error) {
-	if a.line == nil {
-		rl, err := readline.NewEx(&readline.Config{Stdin: a.stdin, Stdout: a.stderr, Stderr: a.stderr})
-		if err != nil {
-			return "", err
-		}
-		a.line = rl
-	}
-	answer, err := a.readLine(ctx, question)
-	return strings.TrimSpace(answer), err
-}
-
-type lineRead struct {
-	line string
-	err  error
-}
-
-// readLine reads a line from the terminal after prompt. Ctrl-C is
-// readline.ErrInterrupt, end of input io.EOF. If ctx ends first, it returns
-// ctx's error, and the line being read goes to the next call: a read cannot
-// be taken back.
-func (a *App) readLine(ctx context.Context, prompt string) (string, error) {
-	a.line.SetPrompt(prompt)
-	if a.pending == nil {
-		read := make(chan lineRead, 1)
-		go func() {
-			line, err := a.line.Readline()
-			read <- lineRead{line, err}
-		}()
-		a.pending = read
-	} else {
-		a.line.Refresh() // shows the new prompt
-	}
-	select {
-	case r := <-a.pending:
-		a.pending = nil
-		return r.line, r.err
-	case <-ctx.Done():
-		return "", ctx.Err()
-	}
-}
 
 // interactive reports whether a person is at the terminal.
 func (a *App) interactive() bool {

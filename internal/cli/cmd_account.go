@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -57,9 +56,10 @@ func (c *loginCmd) Run(app *App) (Result, error) {
 			return nil, withKind(Dependency, err)
 		}
 	case cookies == "" && app.interactive():
-		fmt.Fprint(app.stderr, "粘贴 pan.baidu.com 的 Cookie (至少含 BDUSS): ")
-		line, _ := bufio.NewReader(app.stdin).ReadString('\n')
-		cookies = strings.TrimSpace(line)
+		var err error
+		if cookies, err = app.ask(app.ctx, "粘贴 pan.baidu.com 的 Cookie (至少含 BDUSS): "); err != nil {
+			return nil, errCancelled
+		}
 	case cookies == "":
 		return nil, usagef("需要 --cookies, --from-chrome 或 --from-edge")
 	}

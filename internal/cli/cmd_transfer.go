@@ -150,6 +150,10 @@ func (r *batchResult) run(app *App, fn func(ctx context.Context, it *item, progr
 	g.SetLimit(max(1, app.cfg.Settings.Parallel))
 	for _, it := range todo {
 		g.Go(func() error {
+			if err := app.ctx.Err(); err != nil { // cancelled: the rest is not started
+				it.fail(err)
+				return nil
+			}
 			if err := fn(app.ctx, it, m.add); err != nil {
 				it.fail(err)
 				m.logf("失败 %s: %v", r.arrow(it), err)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -655,22 +656,50 @@ func TestSecurityCheckLoginLost(t *testing.T) {
 	}
 }
 
-// A question is dropped when the command is cancelled (Ctrl-C, SIGTERM).
+// A question is dropped when the command is cancelled (Ctrl-C, SIGTERM),
+// with what was typed so far: the next read starts afresh.
 func TestAskCancelled(t *testing.T) {
 	ta := newTestApp(t)
-	r, w, _ := os.Pipe() // input that never comes
+	r, w, _ := os.Pipe()
 	defer w.Close()
 	ta.stdin = r
+	w.WriteString("123") // half an answer
 	ctx, cancel := context.WithCancel(context.Background())
-	time.AfterFunc(50*time.Millisecond, cancel)
+	time.AfterFunc(100*time.Millisecond, cancel)
 	done := make(chan error)
 	go func() { _, err := ta.ask(ctx, "? "); done <- err }()
 	select {
 	case err := <-done:
-		if err == nil {
-			t.Error("no error")
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("err = %v", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("still waiting for an answer")
+	}
+	w.WriteString("pwd\n")
+	if line, err := ta.ask(context.Background(), "> "); line != "pwd" || err != nil {
+		t.Errorf("next line %q, %v", line, err)
+	}
+}
+
+// While a dialog holds the meter, transfers go on; their lines wait.
+func TestMeterHold(t *testing.T) {
+	ta := newTestApp(t)
+	m := ta.newMeter(10, "上传")
+	release := m.hold()
+	done := make(chan struct{})
+	go func() { m.add(5); m.logf("已上传 %s", "a"); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a transfer waits for the dialog")
+	}
+	if strings.Contains(ta.stderr.String(), "已上传") {
+		t.Error("printed during the dialog")
+	}
+	release()
+	m.done()
+	if !strings.Contains(ta.stderr.String(), "已上传 a") {
+		t.Errorf("line lost: %q", ta.stderr.String())
 	}
 }

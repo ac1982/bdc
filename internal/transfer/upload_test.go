@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -128,7 +129,7 @@ func TestUploadRestartsExpiredSession(t *testing.T) {
 
 func TestHashFile(t *testing.T) {
 	content := payload(4<<20 + 5)
-	h, err := hashFile(bytesReader(content), int64(len(content)))
+	h, err := hashFile(context.Background(), bytesReader(content), int64(len(content)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,8 +138,17 @@ func TestHashFile(t *testing.T) {
 		len(h.Blocks) != 2 || h.Blocks[0] != sum(content[:4<<20]) || h.Blocks[1] != sum(content[4<<20:]) {
 		t.Fatalf("%+v", h)
 	}
-	empty, _ := hashFile(bytesReader(nil), 0)
+	empty, _ := hashFile(context.Background(), bytesReader(nil), 0)
 	if len(empty.Blocks) != 1 || empty.ContentMD5 != sum(nil) {
 		t.Fatalf("%+v", empty)
+	}
+}
+
+// Hashing stops when the upload is cancelled.
+func TestHashCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := hashFile(ctx, bytesReader(make([]byte, 8<<20)), 8<<20); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
 	}
 }

@@ -63,7 +63,7 @@ func (u *Upload) Run(ctx context.Context) (file baidu.File, rapid bool, err erro
 	if err != nil {
 		return baidu.File{}, false, err
 	}
-	h, err := hashFile(f, fi.Size())
+	h, err := hashFile(ctx, f, fi.Size())
 	if err != nil {
 		return baidu.File{}, false, err
 	}
@@ -171,7 +171,7 @@ func (u *Upload) recordKey(fi os.FileInfo) string {
 }
 
 // hashFile computes what the upload API identifies content by, in one read.
-func hashFile(r io.Reader, size int64) (baidu.Hashes, error) {
+func hashFile(ctx context.Context, r io.Reader, size int64) (baidu.Hashes, error) {
 	const sliceLen = 256 << 10
 	h := baidu.Hashes{Size: size}
 	whole, slice, block := md5.New(), md5.New(), md5.New()
@@ -179,6 +179,9 @@ func hashFile(r io.Reader, size int64) (baidu.Hashes, error) {
 	buf := make([]byte, 1<<20)
 	var read, inBlock int64
 	for {
+		if err := ctx.Err(); err != nil {
+			return h, err
+		}
 		n, err := r.Read(buf)
 		p := buf[:n]
 		whole.Write(p)
