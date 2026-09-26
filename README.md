@@ -65,6 +65,9 @@ Transfers are resumable: an interrupted download or upload continues where it st
 
 - `--json` (before or after the command) puts exactly one JSON document on stdout, with `ok`, `command` and, on failure, `error: {kind, message, exitCode, code?}`. Progress and logs go to stderr. Whatever finished before a failure is still in the document.
 - Nothing waits for input without a terminal: `logout`, `recycle delete` and `update` need `-y`.
+- When Baidu demands a security check (error 132, e.g. after many deletes), bdc at a terminal asks where to send
+  the code (the SMS number or email Baidu has for the account) and for the code, then carries on; without a
+  terminal it exits with 4.
 - Exit codes:
 
 | code | `error.kind` | meaning |

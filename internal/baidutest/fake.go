@@ -43,6 +43,12 @@ const (
 	sign1, sign3 = "fake-sign1", "fake-sign3"
 )
 
+// VerifyCode passes the security check of a Guarded fake.
+const VerifyCode = "246810"
+
+// The security check's parameters, as Baidu hands them out.
+var checkForm = map[string]string{"safetpl": "filemanager", "saferand": "fake-rand", "safesign": "fake-sign"}
+
 // Fake is the netdisk.
 type Fake struct {
 	mu      sync.Mutex
@@ -55,6 +61,10 @@ type Fake struct {
 
 	// Requests counts requests by "host/path?method".
 	Requests map[string]int
+
+	// Guarded makes every change answer Baidu's security check (errno 132)
+	// until the code VerifyCode is submitted, as risk control does.
+	Guarded bool
 
 	// Fail, if set, may answer a modelled endpoint instead of the fake (return
 	// non-nil): tests inject failures with it. n counts calls to the endpoint.
@@ -184,11 +194,12 @@ func (f *Fake) endpoints() map[string]endpoint {
 		"pan.baidu.com/share/record": {handle: func(w http.ResponseWriter, r *http.Request) {
 			reply(w, map[string]any{"errno": 0, "list": []any{}})
 		}},
-		"pan.baidu.com/api/recycle/list/":   {handle: f.recycleList},
-		"pan.baidu.com/api/recycle/restore": {handle: f.restore, write: true},
-		"pan.baidu.com/api/recycle/delete": {write: true, handle: func(w http.ResponseWriter, r *http.Request) {
-			reply(w, map[string]any{"errno": 132, "verify_scene": 2}) // as the real one answered, even the web app
-		}},
+		"pan.baidu.com/api/recycle/list/":                      {handle: f.recycleList},
+		"pan.baidu.com/api/recycle/restore":                    {handle: f.restore, write: true},
+		"pan.baidu.com/api/recycle/delete":                     {handle: f.purge, write: true},
+		"pan.baidu.com/api/authwidget?get":                     {handle: f.authWidget},
+		"pan.baidu.com/api/authwidget?send":                    {handle: f.authWidget},
+		"pan.baidu.com/api/authwidget?check":                   {handle: f.authWidget},
 		"pan.baidu.com/rest/2.0/services/cloud_dl?add_task":    {handle: f.addTask, write: true},
 		"pan.baidu.com/rest/2.0/services/cloud_dl?list_task":   {handle: f.listTasks, write: true},
 		"pan.baidu.com/rest/2.0/services/cloud_dl?delete_task": {handle: f.deleteTask, write: true},
@@ -238,6 +249,10 @@ func (f *Fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				reply(w, v)
 				return
 			}
+		}
+		if ep.write && f.Guarded {
+			reply(w, map[string]any{"errno": 132, "verify_scene": 1, "authwidget": checkForm})
+			return
 		}
 		ep.handle(w, r)
 	}
@@ -583,6 +598,39 @@ func (f *Fake) restore(w http.ResponseWriter, r *http.Request) {
 	id := f.id() // as for a big batch: a background task (small ones answer taskid 0)
 	f.jobs[id] = map[string]any{"errno": 0, "status": "success", "task_errno": 0, "list": []any{}}
 	reply(w, map[string]any{"errno": 0, "faillist": []any{}, "taskid": id})
+}
+
+func (f *Fake) purge(w http.ResponseWriter, r *http.Request) {
+	var ids []int64
+	json.Unmarshal([]byte(r.Form.Get("fidlist")), &ids)
+	for _, id := range ids {
+		delete(f.recycle, id)
+	}
+	reply(w, map[string]any{"errno": 0, "taskid": 0})
+}
+
+// authWidget is the security check: its methods, sending a code, checking it.
+func (f *Fake) authWidget(w http.ResponseWriter, r *http.Request) {
+	for k, v := range checkForm {
+		if r.Form.Get(k) != v {
+			reply(w, map[string]any{"errno": 2, "show_msg": "bad check " + k})
+			return
+		}
+	}
+	switch r.URL.Query().Get("method") {
+	case "get":
+		reply(w, map[string]any{"errno": 0, "data": map[string]any{"sms": "138*****000", "sms_needbind": 0,
+			"email": "", "email_needbind": 1, "support_type": []string{"sms", "email"}}})
+	case "send":
+		reply(w, map[string]any{"errno": 0})
+	case "check":
+		if r.Form.Get("vcode") != VerifyCode {
+			reply(w, map[string]any{"errno": 2, "show_msg": "验证码错误"})
+			return
+		}
+		f.Guarded = false
+		reply(w, map[string]any{"errno": 0, "data": map[string]any{"dtoken": "fake-dtoken"}})
+	}
 }
 
 func (f *Fake) addTask(w http.ResponseWriter, r *http.Request) {

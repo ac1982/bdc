@@ -442,10 +442,46 @@ func TestRecycle(t *testing.T) {
 	if code := ta.run("recycle", "restore", id); code != 0 || !ta.fake.Exists("/d/f.txt") {
 		t.Errorf("restore: %d %s", code, ta.stderr.String())
 	}
-	// Permanent deletion asks for a security check even on the web; say so.
-	code, doc := ta.json(t, "recycle", "delete", "-y", id)
-	if e := doc["error"].(map[string]any); code != 4 || e["code"] != 132.0 || !strings.Contains(e["message"].(string), "验证") {
-		t.Errorf("purge: %d %v", code, doc)
+	ta.run("rm", "/d")
+	if code := ta.run("recycle", "delete", "-y", id); code != 0 {
+		t.Errorf("purge: %d %s", code, ta.stderr.String())
+	}
+	if _, doc := ta.json(t, "recycle", "list"); len(doc["files"].([]any)) != 0 {
+		t.Errorf("still in the bin: %v", doc)
+	}
+}
+
+// Baidu's security check: without a terminal the change fails (auth); at
+// one, the person picks where the code goes and types it, and the change
+// goes on.
+func TestSecurityCheck(t *testing.T) {
+	ta := newTestApp(t)
+	ta.fake.Put("/d/a", nil, 1)
+	ta.fake.Guarded = true
+	code, doc := ta.json(t, "rm", "/d/a")
+	if e, _ := doc["error"].(map[string]any); code != 4 || e["code"] != 132.0 || !strings.Contains(e["message"].(string), "终端") {
+		t.Fatalf("without a terminal: %d %v", code, doc)
+	}
+
+	in := filepath.Join(t.TempDir(), "in")
+	os.WriteFile(in, []byte("3\n\n111111\n"+baidutest.VerifyCode+"\n"), 0o600) // a bad choice, the default, a wrong code, the code
+	ta.stdin, _ = os.Open(in)
+	defer ta.stdin.Close()
+	client, _ := ta.baidu()
+	client.SetVerifier(ta.verify)
+	if code := ta.run("rm", "/d/a"); code != 0 || ta.fake.Exists("/d/a") {
+		t.Fatalf("with the code: %d %s", code, ta.stderr.String())
+	}
+	for _, want := range []string{"1) 短信 138*****000", "验证码已发送到 138*****000", "验证失败: 验证码错误", "验证通过"} {
+		if !strings.Contains(ta.stderr.String(), want) {
+			t.Errorf("dialog lacks %q:\n%s", want, ta.stderr.String())
+		}
+	}
+	if strings.Contains(ta.stderr.String(), "邮箱") { // not bound: not offered
+		t.Errorf("offers an unbound email:\n%s", ta.stderr.String())
+	}
+	if n := ta.fake.Requests["pan.baidu.com/api/authwidget?send"]; n != 1 {
+		t.Errorf("sent %d codes", n)
 	}
 }
 

@@ -25,7 +25,7 @@ that is noted; bdc does not use them.
 | code | meaning | bdc's class |
 |---|---|---|
 | -6 | not logged in / bad login | auth |
-| 132 | security check required (`authwidget`, `verify_scene`), see below | auth; the user must verify on the web or phone |
+| 132 | security check required (`authwidget`, `verify_scene`), see below | passed at a terminal (code by SMS/email), else auth |
 | -9, 31066 | no such file | input |
 | -8, -30, 31061 | already exists | input |
 | -7 | illegal name | input |
@@ -43,7 +43,9 @@ query and form `safetpl, saferand, safesign`:
 3. `check` + `vcode=<code>` → `data{dtoken}`.
 
 The app then repeats the original request unchanged (no dtoken, no new cookie): the check lifts the block for the
-account, and later deletes from other clients (bdc) succeed too. Observed 2026-09-26.
+account, and later deletes from other clients (bdc) succeed too. Observed 2026-09-26. bdc does the same when a person
+is at the terminal (`Client.SetVerifier`): it offers the methods `get` lists, sends the code, checks it and repeats
+the stopped request; requests stopped together wait for one check.
 
 ## Files
 
@@ -123,8 +125,9 @@ redirected to `/error/core.html` ("百度网盘正在升级中"), in the browser
 
 - list: `GET /api/recycle/list/?num=100&page=` → `list[]` with `leftTime` (days).
 - restore: `POST /api/recycle/restore?channel=chunlei&async=1` form `fidlist=[…]`.
-- permanent delete: `POST /api/recycle/delete?channel=chunlei&async=1` form `fidlist=[…]` → **errno 132** with
-  `authwidget` and `verify_scene`: even the web app then asks for an SMS code. Emptying the bin was not tried.
+- permanent delete: `POST /api/recycle/delete?channel=chunlei&async=1` form `fidlist=[…]` → `taskid` (0 when
+  done at once). It answered errno 132 (the security check above) while deletes were being checked. Emptying the bin
+  was not tried.
 
 ## Offline download (云添加)
 

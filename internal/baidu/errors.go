@@ -3,6 +3,7 @@ package baidu
 import (
 	"errors"
 	"fmt"
+	"net/url"
 )
 
 // Classes of failure, for errors.Is. An *Error matches the class of its code.
@@ -21,6 +22,8 @@ type Error struct {
 	Err     error       // the underlying error, if any
 	Status  int         // the HTTP status, when it and not a Baidu code says what failed
 	Items   []BatchItem // a failed batch call: Baidu's answer per item, when it gave one
+
+	check url.Values // a security check (errno 132): what identifies it
 }
 
 // BatchItem is Baidu's answer for one item of a batch call; Errno 0 is done.
@@ -75,7 +78,7 @@ var codeClass = map[int]error{
 var codeMessage = map[int]string{
 	-6:    "身份验证失败, 请重新登录",
 	31045: "登录已失效, 请重新登录",
-	132:   "百度要求安全验证 (操作过于频繁或帐号有风险), 请在网页或手机上完成验证后重试",
+	132:   "百度要求安全验证 (操作过于频繁或帐号有风险): 在终端里运行可当场验证, 或在网页上完成验证后重试",
 	-7:    "文件名非法",
 	-8:    "文件或目录已存在",
 	-30:   "目标已存在",

@@ -23,7 +23,7 @@
 | 1 | failed | server, network or transfer failure | retry later |
 | 2 | input | not found, already exists, no wildcard match, wrong extraction code, bad value | fix the input; `bdc ls --json` to look around |
 | 3 | dependency | browser cookies unreadable (permissions) | log in with `--cookies` |
-| 4 | auth | not logged in or login expired; with `code` 132, Baidu wants a security check instead | `bdc login` again; for 132 logging in does not help: stop and ask the user to verify on the web or phone |
+| 4 | auth | not logged in or login expired; with `code` 132, Baidu wants a security check instead | `bdc login` again; for 132 logging in does not help: ask the user to run the same command in a terminal (bdc then asks where to send a code and for the code), or to verify on the web |
 | 64 | usage | bad command line, or a confirmation needed without a terminal | see `bdc <command> --help`; add `-y` |
 | 130 | cancelled | interrupted | rerun; transfers resume |
 
@@ -34,7 +34,7 @@
 - `md5` is present only when it is the file's real content md5. Baidu does not know it for files stored in several blocks (typically those uploaded in 4 MiB pieces), so those have no `md5`.
 - `mkdir` of a directory that already exists succeeds (`existing[]`), so it is safe to repeat.
 - `cp`/`mv <src…> <dst>`: if `dst` is an existing directory, sources go into it; otherwise one source is copied/renamed to `dst`, several go into a new directory `dst`. `items[]` lists each `{from, to}`.
-- `rm` moves to the recycle bin: `bdc recycle list --json` (`files[].fsId`, `daysLeft`), `bdc recycle restore <fsId…>`, `bdc recycle delete -y <fsId…>` (permanent; Baidu usually demands a security check there, exit 4 with code 132: ask the user to verify on the web or phone).
+- `rm` moves to the recycle bin: `bdc recycle list --json` (`files[].fsId`, `daysLeft`), `bdc recycle restore <fsId…>`, `bdc recycle delete -y <fsId…>` (permanent; Baidu may demand a security check, exit 4 with code 132 without a terminal, see above).
 - Downloads: `-o <dir>` (default: the `save-dir` setting). A directory downloads recursively into `<dir>/<its name>/…`; `--full-path` keeps the whole netdisk path. A file already on disk is `{"status": "skipped", "reason": "exists"}`; `--overwrite` replaces it. Interrupted downloads resume (a `.bdc-part` file sits beside the target meanwhile).
 - Uploads: the last argument is the netdisk directory; the others are local files or directories (uploaded recursively as `<dir>/<name>/…`). If the target exists: `--policy skip` (default) → `skipped`/`exists`; `overwrite` replaces; `rsync` replaces unless the size is the same (`skipped`/`same-size`). `status: "rapid"` means Baidu already had the content and nothing was sent. Interrupted uploads resume.
 - `files[].status` in transfers: `downloaded`, `uploaded`, `rapid`, `skipped` (`reason`: `exists`, `same-size`, `symlink` for a symlinked local directory, which is not followed), `failed` (with `error`); `summary` counts them. A path that cannot be read, or two files that would land on the same target, fail on their own while the rest still transfers. If any file failed the command fails, but the document lists every file.

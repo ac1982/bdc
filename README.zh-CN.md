@@ -63,6 +63,8 @@ bdc config set --connections 16 --download-limit 10MB
 
 - `--json` (放在命令前后都可以) 使 stdout 只输出一份 JSON 文档, 含 `ok`, `command`, 失败时含 `error: {kind, message, exitCode, code?}`. 进度和日志在 stderr. 失败之前完成的部分仍在文档中.
 - 没有终端时不会等待输入: `logout`, `recycle delete`, `update` 需要 `-y`.
+- 百度要求安全验证时 (错误码 132, 比如连续删除之后), 在终端里 bdc 会列出帐号可用的验证方式 (百度登记的手机或邮箱),
+  发送验证码并让你输入, 通过后继续执行; 没有终端时以退出码 4 结束.
 - 退出码:
 
 | 退出码 | `error.kind` | 含义 |

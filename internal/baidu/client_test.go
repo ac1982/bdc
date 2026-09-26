@@ -3,10 +3,14 @@ package baidu
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/ac1982/baidunetdisk-cli/internal/baidutest"
 )
@@ -166,5 +170,41 @@ func TestNetworkErrorHidesToken(t *testing.T) {
 	_, err := c.Mkdir(context.Background(), "/x")
 	if err == nil || strings.Contains(err.Error(), "bdstoken") || !strings.Contains(err.Error(), "connection reset") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// Requests stopped by a security check together are repeated after one check.
+func TestSecurityCheckOnce(t *testing.T) {
+	f := baidutest.New()
+	f.Guarded = true
+	c, _ := New(f.Client(), baidutest.Cookies)
+	var checks atomic.Int32
+	c.SetVerifier(func(ctx context.Context, k *Check) error {
+		checks.Add(1)
+		ms, err := k.Methods(ctx)
+		if err != nil || len(ms) != 1 || ms[0].Type != "sms" {
+			return fmt.Errorf("methods %v: %w", ms, err)
+		}
+		if err := k.Send(ctx, ms[0].Type); err != nil {
+			return err
+		}
+		return k.Submit(ctx, baidutest.VerifyCode)
+	})
+	var g errgroup.Group
+	for i := range 4 {
+		g.Go(func() error { _, err := c.Mkdir(context.Background(), fmt.Sprint("/d", i)); return err })
+	}
+	if err := g.Wait(); err != nil || checks.Load() != 1 {
+		t.Fatalf("err %v, %d checks", err, checks.Load())
+	}
+}
+
+// Without a verifier the check is an auth error.
+func TestSecurityCheckWithoutVerifier(t *testing.T) {
+	f := baidutest.New()
+	f.Guarded = true
+	c, _ := New(f.Client(), baidutest.Cookies)
+	if _, err := c.Mkdir(context.Background(), "/d"); !errors.Is(err, ErrAuth) || Code(err) != 132 {
+		t.Fatal(err)
 	}
 }

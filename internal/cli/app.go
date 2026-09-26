@@ -36,6 +36,7 @@ type App struct {
 	stdout io.Writer
 	stderr io.Writer
 	stdin  *os.File
+	input  *bufio.Reader // reads answers from stdin; see ask
 
 	client    *baidu.Client
 	clientKey string            // what client was built from
@@ -158,13 +159,27 @@ func (a *App) confirm(yes bool, question string) error {
 	if !a.interactive() {
 		return usagef("需要确认, 没有终端时请加 -y")
 	}
-	fmt.Fprint(a.stderr, question+" [y/N] ")
-	answer, _ := bufio.NewReader(a.stdin).ReadString('\n')
-	switch strings.ToLower(strings.TrimSpace(answer)) {
+	answer, _ := a.ask(question + " [y/N] ")
+	switch strings.ToLower(answer) {
 	case "y", "yes":
 		return nil
 	}
-	return withKind(Cancelled, errors.New("已取消"))
+	return errCancelled
+}
+
+var errCancelled = withKind(Cancelled, errors.New("已取消"))
+
+// ask puts a question to the person at the terminal and returns the answer.
+func (a *App) ask(question string) (string, error) {
+	fmt.Fprint(a.stderr, question)
+	if a.input == nil {
+		a.input = bufio.NewReader(a.stdin)
+	}
+	answer, err := a.input.ReadString('\n')
+	if err != nil && answer == "" {
+		return "", err
+	}
+	return strings.TrimSpace(answer), nil
 }
 
 // interactive reports whether a person is at the terminal.
@@ -193,6 +208,9 @@ func (a *App) baidu() (*baidu.Client, error) {
 		c, err := newClient(a.cfg.Settings, acc.Cookies, a.transport)
 		if err != nil {
 			return nil, err
+		}
+		if a.interactive() {
+			c.SetVerifier(a.verify)
 		}
 		a.client, a.clientKey = c, key
 	}

@@ -36,6 +36,10 @@ type Client struct {
 	mu   sync.Mutex
 	me   *identity // see whoami
 	sign *signature
+
+	verifier Verifier   // passes security checks; nil: they fail
+	checkMu  sync.Mutex // one check at a time
+	passed   time.Time  // when the last check was passed
 }
 
 // identity is what the template variables say about the logged-in user.
@@ -149,8 +153,23 @@ func (c *Client) url(ctx context.Context, r *request) (string, error) {
 }
 
 // do sends req and decodes the JSON response into out (which may be nil).
-// Transient failures of idempotent requests are retried.
+// Transient failures of idempotent requests are retried, and a request
+// stopped by a security check is repeated once the check is passed, as the
+// web app does.
 func (c *Client) do(ctx context.Context, req *request, out any) error {
+	sent := time.Now()
+	err := c.send(ctx, req, out)
+	if k := c.checkOf(err); k != nil {
+		if err := c.pass(ctx, k, sent); err != nil {
+			return err
+		}
+		return c.send(ctx, req, out)
+	}
+	return err
+}
+
+// send is do without the security check.
+func (c *Client) send(ctx context.Context, req *request, out any) error {
 	u, err := c.url(ctx, req)
 	if err != nil {
 		return err
@@ -296,6 +315,11 @@ func decode(op string, status int, data []byte, out any) error {
 		ShowMsg   string          `json:"show_msg"`
 		ErrMsg    string          `json:"errmsg"`
 		Info      json.RawMessage `json:"info"` // per item in batch calls; other shapes elsewhere
+		Check     struct {
+			Tpl  string `json:"safetpl"`
+			Rand string `json:"saferand"`
+			Sign string `json:"safesign"`
+		} `json:"authwidget"` // a security check (errno 132)
 	}
 	jsonErr := json.Unmarshal(data, &st)
 	code := int(st.ErrorCode)
@@ -320,7 +344,11 @@ func decode(op string, status int, data []byte, out any) error {
 		if msg == "" {
 			msg = firstNonEmpty(st.ShowMsg, st.ErrorMsg, st.ErrMsg, "未知错误")
 		}
-		return &Error{Op: op, Code: code, Message: msg, Items: items}
+		e := &Error{Op: op, Code: code, Message: msg, Items: items}
+		if st.Check.Sign != "" {
+			e.check = url.Values{"safetpl": {st.Check.Tpl}, "saferand": {st.Check.Rand}, "safesign": {st.Check.Sign}}
+		}
+		return e
 	case status < 200 || status > 299:
 		return &Error{Op: op, Status: status, Message: fmt.Sprintf("HTTP %d: %s", status, snippet(data))}
 	case jsonErr != nil:
