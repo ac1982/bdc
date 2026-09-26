@@ -53,8 +53,10 @@ type configSetCmd struct {
 	Proxy         *string   `help:"代理地址, 空字符串为不用代理"`
 }
 
+// Run applies the settings to a copy, and keeps it only if all of them are
+// valid and saved: a rejected command changes nothing.
 func (c *configSetCmd) Run(app *App) (Result, error) {
-	s := &app.cfg.Settings
+	s := app.cfg.Settings
 	if c.SaveDir != nil {
 		s.SaveDir = *c.SaveDir
 	}
@@ -79,18 +81,22 @@ func (c *configSetCmd) Run(app *App) (Result, error) {
 	if c.Proxy != nil {
 		s.Proxy = *c.Proxy
 	}
+	return app.saveSettings(s)
+}
+
+// saveSettings makes s the settings, if they can be saved.
+func (app *App) saveSettings(s config.Settings) (Result, error) {
+	old := app.cfg.Settings
+	app.cfg.Settings = s
 	if err := app.cfg.Save(); err != nil {
+		app.cfg.Settings = old
 		return nil, err
 	}
-	return configResult{app.cfg.Path(), *s}, nil
+	return configResult{app.cfg.Path(), s}, nil
 }
 
 type configResetCmd struct{}
 
 func (c *configResetCmd) Run(app *App) (Result, error) {
-	app.cfg.Settings = config.Defaults()
-	if err := app.cfg.Save(); err != nil {
-		return nil, err
-	}
-	return configResult{app.cfg.Path(), app.cfg.Settings}, nil
+	return app.saveSettings(config.Defaults())
 }

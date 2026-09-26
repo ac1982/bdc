@@ -889,3 +889,21 @@ func TestPagedFailureKeepsResults(t *testing.T) {
 		}
 	}
 }
+
+// A rejected config set changes nothing, not even for a later command that
+// saves the config.
+func TestConfigSetAtomic(t *testing.T) {
+	ta := newTestApp(t)
+	before := ta.cfg.Settings
+	if code := ta.run("config", "set", "--save-dir", "/tmp/new-downloads", "--connections", "0"); code != 2 {
+		t.Fatalf("exit %d", code)
+	}
+	if ta.cfg.Settings != before {
+		t.Errorf("in this session: %+v", ta.cfg.Settings)
+	}
+	ta.run("cd", "/")
+	saved, _ := config.Load()
+	if saved.Settings.SaveDir == "/tmp/new-downloads" {
+		t.Errorf("saved by a later command: %+v", saved.Settings)
+	}
+}
