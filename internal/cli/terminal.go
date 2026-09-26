@@ -191,5 +191,6 @@ func (a *App) ask(ctx context.Context, question string) (string, error) {
 	} else if k.buf = nil; len(line) == 0 {
 		return "", io.EOF
 	}
+	line = cursorReport.ReplaceAll(line, nil) // a late answer to the editor's query is not typed
 	return string(bytes.TrimSpace(line)), nil
 }

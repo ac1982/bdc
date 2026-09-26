@@ -176,14 +176,15 @@ func (c *treeCmd) Run(app *App) (Result, error) {
 	root := &treeNode{File: f}
 	var build func(n *treeNode, depth int) error
 	build = func(n *treeNode, depth int) error {
-		files, err := client.List(app.ctx, n.Path)
+		files, err := client.List(app.ctx, n.Path) // on failure, the pages read so far
+		for _, f := range files {
+			n.Children = append(n.Children, &treeNode{File: f})
+		}
 		if err != nil {
 			return err
 		}
-		for _, f := range files {
-			child := &treeNode{File: f}
-			n.Children = append(n.Children, child)
-			if f.IsDir && (c.Depth == 0 || depth < c.Depth) {
+		for _, child := range n.Children {
+			if child.IsDir && (c.Depth == 0 || depth < c.Depth) {
 				if err := build(child, depth+1); err != nil {
 					return err
 				}
@@ -284,12 +285,9 @@ func (c *searchCmd) Run(app *App) (Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	files, err := client.Search(app.ctx, app.abs(c.Path), c.Keyword, c.Recursive)
-	if err != nil {
-		return nil, err
-	}
+	files, err := client.Search(app.ctx, app.abs(c.Path), c.Keyword, c.Recursive) // on failure, the pages read so far
 	slices.SortFunc(files, func(a, b baidu.File) int { return cmp.Compare(a.Path, b.Path) })
-	return searchResult{Files: append([]baidu.File{}, files...)}, nil
+	return searchResult{Files: append([]baidu.File{}, files...)}, err
 }
 
 // cd, pwd

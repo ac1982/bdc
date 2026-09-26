@@ -845,3 +845,47 @@ func TestCursorQueryWithPaste(t *testing.T) {
 		t.Errorf("then %q", buf[:n])
 	}
 }
+
+// An answer to the editor's cursor query that comes too late (a slow link)
+// is not taken for typed input.
+func TestLateCursorReport(t *testing.T) {
+	r, w, _ := os.Pipe()
+	defer w.Close()
+	ta := newTestApp(t)
+	ta.stdin = r
+	w.WriteString("\x1b[24;1Ry\n")
+	if got, err := ta.ask(context.Background(), "? "); got != "y" || err != nil {
+		t.Errorf("got %q, %v", got, err)
+	}
+}
+
+// A listing that fails on a later page keeps the pages read before.
+func TestPagedFailureKeepsResults(t *testing.T) {
+	for _, c := range []struct {
+		endpoint string
+		args     []string
+		count    func(map[string]any) int
+	}{
+		{"pan.baidu.com/api/search", []string{"search", "item", "--path", "/d"}, func(d map[string]any) int { f, _ := d["files"].([]any); return len(f) }},
+		{"pan.baidu.com/api/list", []string{"tree", "/d"}, func(d map[string]any) int {
+			root, _ := d["root"].(map[string]any)
+			ch, _ := root["children"].([]any)
+			return len(ch)
+		}},
+	} {
+		ta := newTestApp(t)
+		for i := range 1001 {
+			ta.fake.Put(fmt.Sprintf("/d/item%04d", i), nil, 1)
+		}
+		ta.fake.Fail = func(endpoint string, n int) any {
+			if endpoint == c.endpoint && n == 2 {
+				return map[string]any{"errno": -6}
+			}
+			return nil
+		}
+		code, doc := ta.json(t, c.args...)
+		if n := c.count(doc); code != 4 || n == 0 {
+			t.Errorf("%s: exit %d, %d results kept", c.args[0], code, n)
+		}
+	}
+}
