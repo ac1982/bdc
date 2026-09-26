@@ -87,6 +87,7 @@ type request struct {
 	ua     string
 	header http.Header
 	raw    bool // out is *[]byte: return the body as is, no error decoding
+	once   bool // do not retry, even a GET
 }
 
 // do sends req and decodes the JSON response into out (which may be nil).
@@ -136,24 +137,27 @@ func (c *Client) do(ctx context.Context, req *request, out any) error {
 			return response{}, err
 		}
 		if resp.StatusCode >= 500 && method == http.MethodGet {
-			return response{}, fmt.Errorf("HTTP %s", resp.Status)
+			return response{}, &Error{Op: req.op, Status: resp.StatusCode, Message: "HTTP " + resp.Status}
 		}
 		return response{resp.StatusCode, data}, nil
 	}
 	var resp response
-	if method == http.MethodGet {
+	if method == http.MethodGet && !req.once {
 		resp, err = backoff.Retry(ctx, send, backoff.WithMaxTries(3),
 			backoff.WithBackOff(&backoff.ExponentialBackOff{InitialInterval: 500 * time.Millisecond, Multiplier: 2, MaxInterval: 4 * time.Second}))
 	} else {
 		resp, err = send()
 	}
 	if err != nil {
-		if errors.Is(err, context.Canceled) {
+		if _, ok := errors.AsType[*Error](err); ok || errors.Is(err, context.Canceled) {
 			return err
 		}
 		return &Error{Op: req.op, Err: err}
 	}
 	if req.raw {
+		if resp.status < 200 || resp.status > 299 {
+			return &Error{Op: req.op, Status: resp.status, Message: fmt.Sprintf("HTTP %d", resp.status)}
+		}
 		*out.(*[]byte) = resp.body
 		return nil
 	}
@@ -197,7 +201,7 @@ func decode(op string, status int, data []byte, out any) error {
 		}
 		return &Error{Op: op, Code: code, Message: msg, Items: items}
 	case status < 200 || status > 299:
-		return &Error{Op: op, Message: fmt.Sprintf("HTTP %d: %s", status, snippet(data))}
+		return &Error{Op: op, Status: status, Message: fmt.Sprintf("HTTP %d: %s", status, snippet(data))}
 	case jsonErr != nil:
 		return &Error{Op: op, Message: "无法解析服务器的响应: " + snippet(data), Err: jsonErr}
 	case out == nil:

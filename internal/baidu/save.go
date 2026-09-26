@@ -142,11 +142,16 @@ func (n flexInt) String() string { return strconv.FormatInt(int64(n), 10) }
 func (c *Client) sharePage(ctx context.Context, link ShareLink, referer string) (sharePageData, error) {
 	op := "打开分享 " + link.url()
 	var html []byte
-	err := c.do(ctx, &request{op: op, url: link.url(), ua: uaNetdisk, header: http.Header{"Referer": {referer}}, raw: true}, &html)
+	// No retries: while Baidu's share service is down, each attempt hangs
+	// for most of a minute before failing.
+	err := c.do(ctx, &request{op: op, url: link.url(), ua: uaNetdisk, header: http.Header{"Referer": {referer}}, raw: true, once: true}, &html)
+	page := string(html)
+	if e, ok := errors.AsType[*Error](err); (ok && e.Status >= 500) || strings.Contains(page, "网盘正在升级") {
+		return sharePageData{}, &Error{Op: op, Message: "百度网盘的分享服务暂时不可用 (百度显示正在升级), 请稍后再试", Err: err}
+	}
 	if err != nil {
 		return sharePageData{}, err
 	}
-	page := string(html)
 	for rest := page; ; {
 		i := strings.Index(rest, "window.locals = ")
 		if i < 0 {
@@ -164,7 +169,10 @@ func (c *Client) sharePage(ctx context.Context, link ShareLink, referer string) 
 			return d, &Error{Op: op, Message: "分享页面显示未登录; 登录的 Cookie 需要包含 STOKEN", Err: ErrAuth}
 		}
 		if d.ShareID == 0 {
-			return d, &Error{Op: op, Message: "分享不存在或已失效", Err: ErrNotFound}
+			// Baidu's error page (e.g. /wap/error?errortype=0) also shows up
+			// while its share service is degraded, so this is not proof the
+			// share is gone.
+			return d, &Error{Op: op, Message: "百度返回了错误页: 分享可能已失效, 也可能是分享服务暂时不可用, 请稍后再试", Err: ErrNotFound}
 		}
 		return d, nil
 	}

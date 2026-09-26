@@ -3,6 +3,8 @@ package baidu
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -94,3 +96,22 @@ func TestDoneItems(t *testing.T) {
 		}
 	}
 }
+
+// While Baidu's share service is down, saving says so, without retrying.
+func TestSaveShareServiceDown(t *testing.T) {
+	calls := 0
+	hc := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{StatusCode: 500, Status: "500 Internal Server Error", Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+	})}
+	c, _ := New(hc, baidutest.Cookies, 1)
+	link, _ := ParseShareLink("https://pan.baidu.com/s/1abc?pwd=abcd", "")
+	_, err := c.SaveShare(context.Background(), link, "/x")
+	if err == nil || !strings.Contains(err.Error(), "暂时不可用") || calls != 1 {
+		t.Fatalf("err %v after %d requests", err, calls)
+	}
+}
+
+type roundTrip func(*http.Request) (*http.Response, error)
+
+func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

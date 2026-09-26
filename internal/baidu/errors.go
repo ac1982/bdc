@@ -19,6 +19,7 @@ type Error struct {
 	Code    int         // Baidu's error code; 0 for network and decoding failures
 	Message string      // Baidu's message, or our explanation of the code
 	Err     error       // the underlying error, if any
+	Status  int         // the HTTP status, when it and not a Baidu code says what failed
 	Items   []BatchItem // a failed batch call: Baidu's answer per item, when it gave one
 }
 
